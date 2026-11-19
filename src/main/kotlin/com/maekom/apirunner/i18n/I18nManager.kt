@@ -9,6 +9,7 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
+// [v0.1.2] 플러그인 자체 KO/EN 다국어 관리자에 시나리오 이름 변경, 동적 변수 도움말, 응답 추출 가이드, cURL 복사 문구 추가
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -116,10 +117,16 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "시나리오:",
+            "toolbar.rename" to "✎ 이름 변경",
+            "toolbar.rename.tooltip" to "현재 시나리오 이름 및 저장 파일명 변경",
             "toolbar.save" to "저장",
             "toolbar.newScenario" to "새 시나리오",
             "toolbar.importExport" to "불러오기/내보내기 ▾",
             "toolbar.globalConfig" to "공통 헤더/시크릿",
+            "toolbar.variables" to "{{\$}} 변수 도움말",
+            "toolbar.variables.tooltip" to "내장 동적 변수 및 시나리오 추출 변수 치트시트 열기",
+            "toolbar.curl" to "cURL 복사 ▾",
+            "toolbar.curl.tooltip" to "현재 스텝 또는 전체 시나리오를 cURL 명령어로 복사",
             "toolbar.baseUrl" to "BaseURL:",
             "toolbar.baseUrl.tooltip" to "시나리오 전역 Base URL (예: http://localhost:8080)",
             "toolbar.ignoreSsl" to "SSL 무시",
@@ -159,7 +166,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "params.col.description" to "Description",
             "params.add" to "+ 파라미터 추가",
             "params.remove" to "- 삭제",
-            "params.hint" to "  💡 체크된 항목만 URL 쿼리스트링으로 전송됩니다 ({{변수명}} 치환 지원)",
+            "params.hint" to "  💡 체크된 항목만 URL 쿼리스트링으로 전송 (우클릭으로 동적/추출 변수 삽입)",
 
             // Headers Tab
             "headers.col.key" to "Header Key",
@@ -169,7 +176,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Body Tab
             "body.formatJson" to "JSON 포맷팅",
-            "body.hint" to "  💡 {{변수명}} 치환 지원 (컨텍스트 > 시크릿 > 전역 변수)",
+            "body.hint" to "  💡 {{변수명}} / {{\$kstNow}} 지원 (우클릭으로 변수 삽입)",
             "body.invalidJson.title" to "JSON 포맷 오류",
             "body.invalidJson.msg" to "유효한 JSON 형식이 아닙니다:\n%s",
 
@@ -179,6 +186,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extract.col.required" to "필수",
             "extract.add" to "+ 규칙 추가",
             "extract.remove" to "- 삭제",
+            "extract.guide" to "? 가이드",
+            "extract.guide.tooltip" to "JsonPath 작성법 및 동적 변수 사용 가이드 보기",
             "extract.hint" to "  ⚠️ 필수(체크) 추출 실패 시 즉시 Fail-Fast 중단",
 
             // Right Pane (Result Viewer)
@@ -194,15 +203,29 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "result.extractedCol.name" to "추출 변수명",
             "result.extractedCol.value" to "값",
             "result.responseHeader" to "응답 본문 (JSON / Raw Text)",
+            "result.extractFromResponse" to "+ 응답에서 변수 추출",
+            "result.extractFromResponse.tooltip" to "현재 응답 JSON에서 필드를 선택해 응답 변수 추출 규칙에 자동 추가",
+            "result.context.addExtractRule" to "🌶️ 이 필드를 추출 변수로 추가",
 
             // Scenario Status & Feedback
             "status.saved" to "💾 저장됨 (%s)",
+            "status.renamed" to "✎ 이름 변경됨 (%s)",
             "status.unsaved" to "● 미저장 변경사항",
             "status.globalSaved" to "🔒 공통 설정 및 시크릿 저장됨",
             "status.scenarioRunning" to "🔄 시나리오 실행 중...",
             "status.scenarioCompleted" to "✅ 완료 (%d ms)",
             "status.scenarioAborted" to "⛔ ABORTED (%d ms)",
             "status.stopping" to "⏹ 중단 요청 중...",
+            "status.curlCopied" to "📋 cURL 복사 완료 (%s)",
+            "status.extractRuleAdded" to "✅ 추출 규칙 추가됨: %s (%s)",
+
+            // Rename Scenario Dialog
+            "dialog.rename.title" to "시나리오 이름 변경",
+            "dialog.rename.msg" to "새 시나리오 이름을 입력하세요 (저장 파일명도 함께 변경됩니다):",
+            "dialog.rename.exists.title" to "동일한 시나리오 존재",
+            "dialog.rename.exists.msg" to "이미 같은 파일명의 시나리오('%s')가 존재합니다. 덮어쓰기를 방지하기 위해 다른 이름을 입력하세요.",
+            "dialog.rename.invalid.msg" to "유효한 시나리오 이름을 입력하세요.",
+            "dialog.rename.failed.msg" to "시나리오 파일 이름 변경 중 오류가 발생했습니다.",
 
             // Dirty Check Dialog
             "dialog.dirty.title" to "변경사항 저장 확인",
@@ -237,6 +260,91 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "dialog.noSteps.msg" to "실행할 스텝이 없습니다. 컨트롤러의 고추 아이콘 또는 [+ 빈 스텝]으로 추가하세요.",
             "dialog.error.title" to "오류",
 
+            // Dynamic Variable Descriptions
+            "dynvar.isoTimestamp" to "UTC 기준 현재 ISO-8601 시각",
+            "dynvar.timestamp" to "현재 Unix Epoch 초 (10자리)",
+            "dynvar.timestampMs" to "현재 Unix Epoch 밀리초 (13자리)",
+            "dynvar.kstNow" to "KST(서울) 기준 yyyy-MM-dd HH:mm:ss",
+            "dynvar.kstDate" to "KST(서울) 기준 날짜 yyyy-MM-dd",
+            "dynvar.kstCompact" to "KST(서울) 숫자 타임스탬프 yyyyMMddHHmmss (주문/거래번호용)",
+            "dynvar.kstIso" to "KST(서울) ISO-8601 오프셋 (+09:00)",
+            "dynvar.uuid" to "무작위 UUID v4 문자열",
+
+            // Variable Cheat-Sheet & Context Menu
+            "vars.dialog.title" to "동적 변수 & 시나리오 변수 도움말",
+            "vars.dialog.hint" to "행을 더블클릭하거나 [복사] 버튼을 누르면 {{...}} 토큰이 클립보드에 복사됩니다. 입력창 우클릭 메뉴에서도 바로 삽입할 수 있습니다.",
+            "vars.dialog.refresh" to "🔄 실시간 값 새로고침",
+            "vars.dialog.close" to "닫기",
+            "vars.col.category" to "구분",
+            "vars.col.token" to "변수명",
+            "vars.col.desc" to "설명",
+            "vars.col.preview" to "실시간 예시 / 현재 값",
+            "vars.col.action" to "복사",
+            "vars.cat.dynamic" to "내장 동적",
+            "vars.cat.extracted" to "스텝 추출",
+            "vars.cat.global" to "전역 변수",
+            "vars.copyBtn" to "복사",
+            "vars.copiedMsg" to "📋 클립보드에 복사됨: %s",
+            "vars.extracted.desc" to "이전 스텝에서 추출된 시나리오 변수",
+            "vars.extracted.pending" to "(실행 후 추출됨)",
+            "vars.global.desc" to "시나리오 전역 변수",
+            "vars.menu.insert" to "🌶️ 동적/추출 변수 삽입",
+            "vars.menu.sectionDynamic" to "── 내장 동적 변수 ──",
+            "vars.menu.sectionScenario" to "── 시나리오 추출/전역 변수 ──",
+            "vars.menu.noScenarioVars" to "(이전 스텝 추출 변수 없음)",
+            "vars.menu.cut" to "잘라내기",
+            "vars.menu.copy" to "복사",
+            "vars.menu.paste" to "붙여넣기",
+
+            // Extract Guide & One-Click Response Extract Dialog
+            "guide.title" to "응답 변수 추출(JsonPath) & 동적 변수 가이드",
+            "guide.close" to "닫기",
+            "guide.content.html" to """
+                <html><body style='font-family:sans-serif; padding:6px;'>
+                <h3>1. JsonPath 작성 예시</h3>
+                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%;'>
+                  <tr><th>JsonPath 표현식</th><th>설명</th></tr>
+                  <tr><td><code>$.data.id</code></td><td>루트 객체의 <code>data.id</code> 필드 값 추출</td></tr>
+                  <tr><td><code>$.items[0].token</code></td><td><code>items</code> 배열의 첫 번째 요소에서 <code>token</code> 추출</td></tr>
+                  <tr><td><code>$.result.list[*].code</code></td><td>배열 전체 요소의 <code>code</code> 값 목록 추출</td></tr>
+                  <tr><td><code>$.users[?(@.active==true)].id</code></td><td>조건에 일치하는 요소 필터링 추출</td></tr>
+                </table>
+                <br/>
+                <h3>2. 다음 스텝에서 추출 변수 사용하기</h3>
+                <ul>
+                  <li>추출 규칙에 변수명을 <code>accessToken</code>으로 저장했다면, 다음 스텝의 <b>URL, Params, Headers, Body(JSON)</b> 어디서나 <code>{{accessToken}}</code>으로 참조할 수 있습니다.</li>
+                  <li><b>팁:</b> 우측 응답 JSON 본문에서 원하는 필드에 우클릭 → <b>[🌶️ 이 필드를 추출 변수로 추가]</b>를 누르면 JsonPath가 자동 계산됩니다.</li>
+                  <li><b>치환 우선순위:</b> 내장 동적 변수(<code>{{${'$'}...}}</code>) &gt; 실행 컨텍스트(추출 변수) &gt; <code>secrets.local.json</code> &gt; 전역 변수</li>
+                </ul>
+                <br/>
+                <h3>3. 내장 동적 변수 치트시트 (실행 직전 실시간 평가)</h3>
+                %s
+                </body></html>
+            """,
+            "extractDialog.title" to "응답 JSON 필드 추출 규칙 추가",
+            "extractDialog.add" to "규칙 추가",
+            "extractDialog.cancel" to "취소",
+            "extractDialog.fieldSelect" to "JSON 경로 선택:",
+            "extractDialog.jsonPath" to "JsonPath:",
+            "extractDialog.varName" to "추출 변수명:",
+            "extractDialog.required" to "필수 추출 (실패 시 Fail-Fast 즉시 중단)",
+            "extractDialog.preview" to "현재 응답 값:",
+            "extractDialog.noJson.title" to "JSON 응답 없음",
+            "extractDialog.noJson.msg" to "추출할 수 있는 유효한 JSON 응답 본문이 없습니다. 먼저 API를 실행해 JSON 응답을 확인하세요.",
+            "extractDialog.noStep.msg" to "추출 규칙을 추가할 활성 스텝이 선택되어 있지 않습니다.",
+            "extractDialog.invalidInput" to "변수명과 JsonPath를 모두 입력해야 합니다.",
+
+            // cURL Copy Menu & Feedback
+            "curl.menu.title" to "cURL 내보내기",
+            "curl.menu.step" to "📋 현재 스텝 cURL 복사",
+            "curl.menu.scenario" to "📜 전체 시나리오 cURL 복사",
+            "curl.copied.step.title" to "cURL 복사 완료",
+            "curl.copied.step.msg" to "현재 스텝의 cURL 명령어가 클립보드에 복사되었습니다.",
+            "curl.copied.scenario.title" to "전체 시나리오 cURL 복사 완료",
+            "curl.copied.scenario.msg" to "총 %d개 스텝의 순차 실행 cURL 스크립트가 클립보드에 복사되었습니다.",
+            "curl.noStep.msg" to "cURL로 복사할 선택된 스텝이 없습니다.",
+            "curl.noScenarioSteps.msg" to "cURL로 복사할 스텝이 시나리오에 없습니다.",
+
             // Global Config Dialog
             "global.title" to "공통 헤더 / 전역 변수 / 로컬 시크릿 관리",
             "global.save" to "저장",
@@ -246,7 +354,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.tab.vars" to "전역 변수 (Global Variables)",
             "global.tab.vars.hint" to "시나리오 파일(.maekom/scenarios/*.json)에 저장됩니다. URL/헤더/본문에서 {{변수명}}으로 참조하세요.",
             "global.tab.secrets" to "🔒 로컬 시크릿 (secrets.local.json)",
-            "global.tab.secrets.hint" to "비밀번호/토큰 등 민감정보는 .maekom/secrets.local.json에 분리 저장됩니다(.gitignore 적용). 치환 우선순위: 실행 컨텍스트 > 시크릿 > 전역 변수",
+            "global.tab.secrets.hint" to "비밀번호/토큰 등 민감정보는 .maekom/secrets.local.json에 분리 저장됩니다(.gitignore 적용). 치환 우선순위: 내장 동적 변수 > 실행 컨텍스트 > 시크릿 > 전역 변수",
             "global.col.key" to "Key (이름)",
             "global.col.value" to "Value (값)",
             "global.add" to "+ 항목 추가",
@@ -268,10 +376,16 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "Scenario:",
+            "toolbar.rename" to "✎ Rename",
+            "toolbar.rename.tooltip" to "Rename current scenario and its JSON file",
             "toolbar.save" to "Save",
             "toolbar.newScenario" to "New Scenario",
             "toolbar.importExport" to "Import/Export ▾",
             "toolbar.globalConfig" to "Headers/Secrets",
+            "toolbar.variables" to "{{\$}} Variables",
+            "toolbar.variables.tooltip" to "Open built-in dynamic & scenario variables cheat sheet",
+            "toolbar.curl" to "Copy cURL ▾",
+            "toolbar.curl.tooltip" to "Copy current step or full scenario as cURL commands",
             "toolbar.baseUrl" to "BaseURL:",
             "toolbar.baseUrl.tooltip" to "Scenario global Base URL (e.g. http://localhost:8080)",
             "toolbar.ignoreSsl" to "Ignore SSL",
@@ -311,7 +425,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "params.col.description" to "Description",
             "params.add" to "+ Add Param",
             "params.remove" to "- Delete",
-            "params.hint" to "  💡 Only checked items are sent in the URL query string ({{var}} supported)",
+            "params.hint" to "  💡 Only checked items are sent in URL query (Right-click to insert variables)",
 
             // Headers Tab
             "headers.col.key" to "Header Key",
@@ -321,7 +435,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Body Tab
             "body.formatJson" to "Format JSON",
-            "body.hint" to "  💡 {{var}} substitution supported (Context > Secrets > Global Vars)",
+            "body.hint" to "  💡 Supports {{var}} & {{\$kstNow}} (Right-click to insert variables)",
             "body.invalidJson.title" to "Invalid JSON",
             "body.invalidJson.msg" to "Not a valid JSON document:\n%s",
 
@@ -331,6 +445,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extract.col.required" to "Required",
             "extract.add" to "+ Add Rule",
             "extract.remove" to "- Delete",
+            "extract.guide" to "? Guide",
+            "extract.guide.tooltip" to "View JsonPath examples & dynamic variables guide",
             "extract.hint" to "  ⚠️ Fail-Fast aborts immediately if a required rule fails",
 
             // Right Pane (Result Viewer)
@@ -346,15 +462,29 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "result.extractedCol.name" to "Variable",
             "result.extractedCol.value" to "Value",
             "result.responseHeader" to "Response Body (JSON / Raw Text)",
+            "result.extractFromResponse" to "+ Extract from Response",
+            "result.extractFromResponse.tooltip" to "Pick a field from response JSON and add it to Extract Rules",
+            "result.context.addExtractRule" to "🌶️ Add Field to Extract Rules",
 
             // Scenario Status & Feedback
             "status.saved" to "💾 Saved (%s)",
+            "status.renamed" to "✎ Renamed (%s)",
             "status.unsaved" to "● Unsaved changes",
             "status.globalSaved" to "🔒 Global config & secrets saved",
             "status.scenarioRunning" to "🔄 Running scenario...",
             "status.scenarioCompleted" to "✅ Completed (%d ms)",
             "status.scenarioAborted" to "⛔ ABORTED (%d ms)",
             "status.stopping" to "⏹ Stopping...",
+            "status.curlCopied" to "📋 cURL copied (%s)",
+            "status.extractRuleAdded" to "✅ Extract rule added: %s (%s)",
+
+            // Rename Scenario Dialog
+            "dialog.rename.title" to "Rename Scenario",
+            "dialog.rename.msg" to "Enter a new scenario name (the JSON filename will also be renamed):",
+            "dialog.rename.exists.title" to "Scenario Already Exists",
+            "dialog.rename.exists.msg" to "A scenario named '%s' already exists. Choose another name to prevent overwriting.",
+            "dialog.rename.invalid.msg" to "Please enter a valid scenario name.",
+            "dialog.rename.failed.msg" to "Failed to rename scenario file.",
 
             // Dirty Check Dialog
             "dialog.dirty.title" to "Unsaved Changes",
@@ -389,6 +519,91 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "dialog.noSteps.msg" to "No steps to run. Add endpoints using the chili gutter icon or [+ Empty Step].",
             "dialog.error.title" to "Error",
 
+            // Dynamic Variable Descriptions
+            "dynvar.isoTimestamp" to "Current UTC ISO-8601 timestamp",
+            "dynvar.timestamp" to "Current Unix Epoch seconds (10 digits)",
+            "dynvar.timestampMs" to "Current Unix Epoch milliseconds (13 digits)",
+            "dynvar.kstNow" to "KST (Asia/Seoul) yyyy-MM-dd HH:mm:ss",
+            "dynvar.kstDate" to "KST (Asia/Seoul) date yyyy-MM-dd",
+            "dynvar.kstCompact" to "KST compact digits yyyyMMddHHmmss (for order/deal IDs)",
+            "dynvar.kstIso" to "KST ISO-8601 with offset (+09:00)",
+            "dynvar.uuid" to "Random UUID v4 string",
+
+            // Variable Cheat-Sheet & Context Menu
+            "vars.dialog.title" to "Dynamic & Scenario Variables Cheat Sheet",
+            "vars.dialog.hint" to "Double-click a row or click [Copy] to copy the {{...}} token. You can also right-click any input field to insert directly.",
+            "vars.dialog.refresh" to "🔄 Refresh Live Values",
+            "vars.dialog.close" to "Close",
+            "vars.col.category" to "Type",
+            "vars.col.token" to "Variable",
+            "vars.col.desc" to "Description",
+            "vars.col.preview" to "Live Preview / Value",
+            "vars.col.action" to "Copy",
+            "vars.cat.dynamic" to "Dynamic",
+            "vars.cat.extracted" to "Extracted",
+            "vars.cat.global" to "Global",
+            "vars.copyBtn" to "Copy",
+            "vars.copiedMsg" to "📋 Copied to clipboard: %s",
+            "vars.extracted.desc" to "Variable extracted from a previous step",
+            "vars.extracted.pending" to "(available after run)",
+            "vars.global.desc" to "Scenario global variable",
+            "vars.menu.insert" to "🌶️ Insert Dynamic / Scenario Variable",
+            "vars.menu.sectionDynamic" to "── Built-in Dynamic Variables ──",
+            "vars.menu.sectionScenario" to "── Scenario Extracted / Global Variables ──",
+            "vars.menu.noScenarioVars" to "(No extracted variables yet)",
+            "vars.menu.cut" to "Cut",
+            "vars.menu.copy" to "Copy",
+            "vars.menu.paste" to "Paste",
+
+            // Extract Guide & One-Click Response Extract Dialog
+            "guide.title" to "Extract Rules (JsonPath) & Dynamic Variables Guide",
+            "guide.close" to "Close",
+            "guide.content.html" to """
+                <html><body style='font-family:sans-serif; padding:6px;'>
+                <h3>1. JsonPath Examples</h3>
+                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%;'>
+                  <tr><th>JsonPath Expression</th><th>Description</th></tr>
+                  <tr><td><code>$.data.id</code></td><td>Extracts <code>data.id</code> field from root object</td></tr>
+                  <tr><td><code>$.items[0].token</code></td><td>Extracts <code>token</code> from the first item in <code>items</code></td></tr>
+                  <tr><td><code>$.result.list[*].code</code></td><td>Extracts all <code>code</code> values from the array</td></tr>
+                  <tr><td><code>$.users[?(@.active==true)].id</code></td><td>Filters matching elements and extracts <code>id</code></td></tr>
+                </table>
+                <br/>
+                <h3>2. Using Extracted Variables in Next Steps</h3>
+                <ul>
+                  <li>If you extract a field into variable <code>accessToken</code>, reference it via <code>{{accessToken}}</code> in <b>URL, Params, Headers, or Body (JSON)</b> of subsequent steps.</li>
+                  <li><b>Tip:</b> Right-click any field in the Response JSON pane → <b>[🌶️ Add Field to Extract Rules]</b> to compute its JsonPath automatically.</li>
+                  <li><b>Priority:</b> Built-in Dynamic (<code>{{${'$'}...}}</code>) &gt; Runtime Context &gt; <code>secrets.local.json</code> &gt; Global Variables</li>
+                </ul>
+                <br/>
+                <h3>3. Built-in Dynamic Variables (Evaluated Live Before Each Request)</h3>
+                %s
+                </body></html>
+            """,
+            "extractDialog.title" to "Add Extract Rule from Response JSON",
+            "extractDialog.add" to "Add Rule",
+            "extractDialog.cancel" to "Cancel",
+            "extractDialog.fieldSelect" to "JSON Field:",
+            "extractDialog.jsonPath" to "JsonPath:",
+            "extractDialog.varName" to "Variable Name:",
+            "extractDialog.required" to "Required (Fail-Fast abort if missing)",
+            "extractDialog.preview" to "Current Value:",
+            "extractDialog.noJson.title" to "No JSON Response",
+            "extractDialog.noJson.msg" to "No valid JSON response body available. Run an API request returning JSON first.",
+            "extractDialog.noStep.msg" to "No active step selected to attach the extract rule.",
+            "extractDialog.invalidInput" to "Both Variable Name and JsonPath are required.",
+
+            // cURL Copy Menu & Feedback
+            "curl.menu.title" to "Export as cURL",
+            "curl.menu.step" to "📋 Copy Current Step as cURL",
+            "curl.menu.scenario" to "📜 Copy Full Scenario as cURL",
+            "curl.copied.step.title" to "cURL Copied",
+            "curl.copied.step.msg" to "Current step cURL command copied to clipboard.",
+            "curl.copied.scenario.title" to "Full Scenario cURL Copied",
+            "curl.copied.scenario.msg" to "Sequential cURL script (%d steps) copied to clipboard.",
+            "curl.noStep.msg" to "No step is currently selected to copy as cURL.",
+            "curl.noScenarioSteps.msg" to "There are no steps in this scenario to export.",
+
             // Global Config Dialog
             "global.title" to "Global Headers / Variables / Local Secrets",
             "global.save" to "Save",
@@ -398,7 +613,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.tab.vars" to "Global Variables",
             "global.tab.vars.hint" to "Saved in scenario JSON (.maekom/scenarios/*.json). Reference via {{varName}} in URL/Headers/Body.",
             "global.tab.secrets" to "🔒 Local Secrets (secrets.local.json)",
-            "global.tab.secrets.hint" to "Sensitive data is stored separately in .maekom/secrets.local.json (gitignored). Priority: Runtime Context > Secrets > Global Vars",
+            "global.tab.secrets.hint" to "Sensitive data is stored separately in .maekom/secrets.local.json (gitignored). Priority: Dynamic > Runtime Context > Secrets > Global Vars",
             "global.col.key" to "Key",
             "global.col.value" to "Value",
             "global.add" to "+ Add Row",

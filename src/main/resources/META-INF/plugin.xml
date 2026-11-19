@@ -8,8 +8,9 @@
     <ul>
       <li>🌶️ Gutter chili icon on Spring Web controller endpoints (<code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code>)</li>
       <li>Auto-extracts <code>@RequestParam</code>, <code>@ModelAttribute</code> &amp; POJO/record fields into a dedicated <b>Params</b> tab with Javadoc/<code>@Schema</code>/<code>@Parameter</code> descriptions, and generates JSON samples from <code>@RequestBody</code> DTOs &amp; records</li>
-      <li>Multi-step scenario chaining with Jayway JsonPath extraction, Fail-Fast policy, dirty-check confirmation, and local secret separation (<code>.maekom/secrets.local.json</code>)</li>
-      <li>3-pane bottom ToolWindow with built-in <b>KO / EN</b> language switch, instant cancellation, and non-JSON response safety</li>
+      <li>Multi-step scenario chaining with Jayway JsonPath extraction, built-in <b>Extract Guide</b>, one-click <b>Response JSON field extraction</b>, Fail-Fast policy, scenario <b>Rename</b>, dirty-check confirmation, and local secret separation (<code>.maekom/secrets.local.json</code>)</li>
+      <li>Built-in live dynamic variables (<code>{{$isoTimestamp}}</code>, <code>{{$timestamp}}</code>, <code>{{$timestampMs}}</code>, <code>{{$kstNow}}</code>, <code>{{$kstDate}}</code>, <code>{{$kstCompact}}</code>, <code>{{$kstIso}}</code>, <code>{{$uuid}}</code>) with a non-modal <b>Variables Cheat Sheet</b> and right-click variable insertion menus</li>
+      <li><b>Copy as cURL</b> for both single steps and full multi-step scenarios, responsive wrapping toolbars, built-in <b>KO / EN</b> language switch, instant cancellation, and non-JSON response safety</li>
     </ul>
     <p><b>License:</b> Apache License, Version 2.0 (Open Source — <a href="https://github.com/maekom-hub/maekom-api-runner">maekom-hub/maekom-api-runner</a>)</p>
     ]]></description>

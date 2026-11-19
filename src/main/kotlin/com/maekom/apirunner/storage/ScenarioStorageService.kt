@@ -10,6 +10,20 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.maekom.apirunner.model.ApiScenario
 import java.io.File
 
+// [v0.1.2] 시나리오 이름 및 저장 파일명 안전 변경(Rename)과 중복 파일 덮어쓰기 방지 결과 모델 추가
+enum class RenameStatus {
+    SUCCESS,
+    ALREADY_EXISTS,
+    INVALID_NAME,
+    FAILED
+}
+
+data class RenameScenarioResult(
+    val status: RenameStatus,
+    val sanitizedName: String,
+    val savedFile: File? = null
+)
+
 /**
  * Persists scenarios under `<project>/.maekom/scenarios/<name>.json`
  * and local sensitive variables under `<project>/.maekom/secrets.local.json`.
@@ -64,6 +78,52 @@ class ScenarioStorageService(private val project: Project) {
         mapper.writeValue(file, scenario)
         refreshVfs(file)
         return file
+    }
+
+    // [v0.1.2] 기존 시나리오 JSON 파일명과 내부 name 필드를 함께 안전하게 변경 (동일 파일명 존재 시 덮어쓰기 차단)
+    fun renameScenario(scenario: ApiScenario, rawNewName: String): RenameScenarioResult {
+        val trimmedInput = rawNewName.trim()
+        if (trimmedInput.isEmpty()) {
+            return RenameScenarioResult(RenameStatus.INVALID_NAME, "")
+        }
+
+        val safeNewName = sanitizeFileName(trimmedInput)
+        val oldSafeName = sanitizeFileName(scenario.name)
+        val dir = getScenariosDir()
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+
+        val oldFile = File(dir, "$oldSafeName.json")
+        val newFile = File(dir, "$safeNewName.json")
+
+        if (safeNewName == oldSafeName) {
+            val saved = saveScenario(scenario)
+            return RenameScenarioResult(RenameStatus.SUCCESS, safeNewName, saved)
+        }
+
+        // Check existing files (also guard case-insensitive collisions on macOS/Windows)
+        val hasCollision = newFile.exists() ||
+            listScenarios().any { existing ->
+                existing.equals(safeNewName, ignoreCase = true) && !existing.equals(oldSafeName, ignoreCase = true)
+            }
+        if (hasCollision) {
+            return RenameScenarioResult(RenameStatus.ALREADY_EXISTS, safeNewName)
+        }
+
+        return try {
+            scenario.name = safeNewName
+            mapper.writeValue(newFile, scenario)
+            if (oldFile.exists() && oldFile.canonicalPath != newFile.canonicalPath) {
+                oldFile.delete()
+            }
+            refreshVfs(dir)
+            refreshVfs(newFile)
+            RenameScenarioResult(RenameStatus.SUCCESS, safeNewName, newFile)
+        } catch (_: Exception) {
+            scenario.name = oldSafeName
+            RenameScenarioResult(RenameStatus.FAILED, safeNewName)
+        }
     }
 
     fun duplicateScenario(sourceName: String, newName: String): ApiScenario? {

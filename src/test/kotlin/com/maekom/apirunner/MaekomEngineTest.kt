@@ -2,7 +2,9 @@ package com.maekom.apirunner
 
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.maekom.apirunner.engine.CurlExporter
 import com.maekom.apirunner.engine.HttpExecutor
+import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunner
 import com.maekom.apirunner.engine.VariableResolver
 import com.maekom.apirunner.i18n.I18nManager
@@ -17,10 +19,13 @@ import com.maekom.apirunner.psi.PsiEndpointExtractor
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 
+// [v0.1.2] 동적 시간/UUID 변수, JsonPath 역추적기, cURL 내보내기, 다국어 번들 검증 단위 테스트 추가
 class MaekomEngineTest {
 
     @Test
@@ -33,6 +38,108 @@ class MaekomEngineTest {
             globalVariables = mapOf("token" to "global-tok", "user" to "global-user", "env" to "local")
         )
         assertEquals("Bearer runtime-tok | user=secret-user | env=local | missing={{unknown}}", resolved)
+    }
+
+    @Test
+    fun `built-in dynamic time and uuid variables evaluate live in expected formats`() {
+        val iso = VariableResolver.resolve("{{\$isoTimestamp}}")
+        val ts = VariableResolver.resolve("{{\$timestamp}}")
+        val tsMs = VariableResolver.resolve("{{\$timestampMs}}")
+        val kstNow = VariableResolver.resolve("{{\$kstNow}}")
+        val kstDate = VariableResolver.resolve("{{\$kstDate}}")
+        val kstCompact = VariableResolver.resolve("{{\$kstCompact}}")
+        val kstIso = VariableResolver.resolve("{{\$kstIso}}")
+        val uuid1 = VariableResolver.resolve("{{\$uuid}}")
+        val uuid2 = VariableResolver.resolve("{{\$uuid}}")
+
+        assertTrue(Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$""").matches(iso), "iso=$iso")
+        assertTrue(Regex("""^\d{10}$""").matches(ts), "ts=$ts")
+        assertTrue(Regex("""^\d{13}$""").matches(tsMs), "tsMs=$tsMs")
+        assertTrue(Regex("""^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$""").matches(kstNow), "kstNow=$kstNow")
+        assertTrue(Regex("""^\d{4}-\d{2}-\d{2}$""").matches(kstDate), "kstDate=$kstDate")
+        assertTrue(Regex("""^\d{14}$""").matches(kstCompact), "kstCompact=$kstCompact")
+        assertTrue(Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+09:00$""").matches(kstIso), "kstIso=$kstIso")
+        assertTrue(Regex("""^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$""").matches(uuid1), "uuid=$uuid1")
+        assertNotEquals(uuid1, uuid2)
+    }
+
+    @Test
+    fun `json path locator traces nested fields and array indices accurately`() {
+        val json = """
+            {
+              "code": 200,
+              "data": {
+                "apiDealNumber": "DEAL-20261119-001",
+                "items": [
+                  {
+                    "id": 101,
+                    "token": "tok-xyz"
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val dealOffset = json.indexOf("apiDealNumber")
+        val dealLocated = JsonPathLocator.locateAtOffset(json, dealOffset)
+        assertNotNull(dealLocated)
+        assertEquals("$.data.apiDealNumber", dealLocated!!.jsonPath)
+        assertEquals("apiDealNumber", dealLocated.suggestedVarName)
+        assertEquals("DEAL-20261119-001", dealLocated.valuePreview)
+
+        val tokenOffset = json.indexOf("tok-xyz")
+        val tokenLocated = JsonPathLocator.locateAtOffset(json, tokenOffset)
+        assertNotNull(tokenLocated)
+        assertEquals("$.data.items[0].token", tokenLocated!!.jsonPath)
+        assertEquals("token", tokenLocated.suggestedVarName)
+    }
+
+    @Test
+    fun `curl exporter builds valid single-step and full-scenario commands with resolved variables`() {
+        val scenario = ApiScenario(
+            name = "order-flow",
+            baseUrl = "https://localhost:8443",
+            ignoreSsl = true,
+            globalHeaders = linkedMapOf("Content-Type" to "application/json"),
+            globalVariables = linkedMapOf("merchantId" to "M-01"),
+            steps = mutableListOf(
+                ApiStep(
+                    name = "Create Order",
+                    method = "POST",
+                    url = "/api/orders",
+                    queryParams = mutableListOf(
+                        QueryParamItem(enabled = true, key = "merchant", value = "{{merchantId}}"),
+                        QueryParamItem(enabled = false, key = "debug", value = "true")
+                    ),
+                    headers = linkedMapOf("Authorization" to "Bearer {{token}}"),
+                    body = """{"dealNo":"{{${'$'}kstCompact}}"}"""
+                ),
+                ApiStep(
+                    name = "Check Order",
+                    enabled = false,
+                    method = "GET",
+                    url = "/api/orders/latest"
+                )
+            )
+        )
+
+        val singleCurl = CurlExporter.exportStep(
+            step = scenario.steps[0],
+            scenario = scenario,
+            runtimeContext = mapOf("token" to "live-tok-99")
+        )
+        assertTrue(singleCurl.contains("curl -k -X POST 'https://localhost:8443/api/orders?merchant=M-01'"))
+        assertFalse(singleCurl.contains("debug=true"))
+        assertTrue(singleCurl.contains("-H 'Authorization: Bearer live-tok-99'"))
+        assertFalse(singleCurl.contains("{{\$kstCompact}}"))
+
+        val fullScript = CurlExporter.exportScenario(
+            scenario = scenario,
+            runtimeContext = mapOf("token" to "live-tok-99")
+        )
+        assertTrue(fullScript.contains("#!/usr/bin/env bash"))
+        assertTrue(fullScript.contains("# Step 1: [POST] Create Order"))
+        assertTrue(fullScript.contains("# Step 2: [GET] Check Order (DISABLED / 비활성 스텝)"))
     }
 
     @Test
@@ -100,15 +207,19 @@ class MaekomEngineTest {
     }
 
     @Test
-    fun `i18n manager switches between KO and EN independently`() {
+    fun `i18n manager switches between KO and EN independently including new feature labels`() {
         val manager = I18nManager()
         assertEquals(PluginLanguage.KO, manager.language)
         assertEquals("저장", manager.translate("toolbar.save"))
-        assertEquals("응답 변수 추출", manager.translate("editor.tab.extract"))
+        assertEquals("✎ 이름 변경", manager.translate("toolbar.rename"))
+        assertEquals("cURL 복사 ▾", manager.translate("toolbar.curl"))
+        assertEquals("? 가이드", manager.translate("extract.guide"))
 
         assertEquals(PluginLanguage.EN, manager.toggleLanguage())
         assertEquals("Save", manager.translate("toolbar.save"))
-        assertEquals("Extract Rules", manager.translate("editor.tab.extract"))
+        assertEquals("✎ Rename", manager.translate("toolbar.rename"))
+        assertEquals("Copy cURL ▾", manager.translate("toolbar.curl"))
+        assertEquals("? Guide", manager.translate("extract.guide"))
 
         assertEquals(PluginLanguage.KO, manager.toggleLanguage())
         assertEquals("저장", manager.translate("toolbar.save"))
@@ -189,7 +300,7 @@ class MaekomEngineTest {
                         method = "POST",
                         url = "/login",
                         expectedStatus = "200",
-                        body = """{"password":"{{pw}}"}""",
+                        body = """{"password":"{{pw}}","reqId":"{{${'$'}kstCompact}}"}""",
                         extractRules = mutableListOf(
                             ExtractRule(varName = "accessToken", jsonPath = "$.data.accessToken", required = true)
                         )

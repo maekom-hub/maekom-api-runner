@@ -16,12 +16,37 @@
 - **🤖 `@ModelAttribute` / POJO & `@RequestBody` 자동 샘플링**
   - `@RequestParam`, `@ModelAttribute` 및 매핑 어노테이션이 생략된 커스텀 DTO / Java `record`의 필드(상속·중첩 필드 포함)를 재귀 탐색해 **`Params` 전용 탭**(`전송 여부 | Key | Value | Description`)으로 자동 추출하며, Javadoc / `@Schema` / `@Parameter` 설명도 함께 채워 넣습니다.
   - `@RequestBody` DTO 및 Java `record`는 순환 참조를 방지하며 포맷팅된 JSON 샘플 본문을 자동 생성하고, `application.yml` / `application.properties`에서 `server.port`를 읽어 `BaseURL`을 자동 세팅합니다.
-- **🔗 멀티 스텝 시나리오 체이닝 & Fail-Fast & 보안**
+- **🔗 멀티 스텝 시나리오 체이닝, 원클릭 JsonPath 추출 & Fail-Fast**
   - Jayway `JsonPath`로 응답 값을 추출해 다음 스텝의 URL·Params·Headers·Body(`{{변수명}}`)로 자동 전달합니다.
-  - 민감정보(`.maekom/secrets.local.json`)와 시나리오 파일(`.maekom/scenarios/*.json`)을 분리 관리하며, 시나리오 전환 시 변경사항 자동 감지(Dirty Check) 및 저장 확인 팝업을 제공합니다.
+  - **`[? 가이드]`** 팝업으로 JsonPath 작성 예시를 바로 확인할 수 있으며, 우측 응답 JSON 본문에서 필드를 우클릭(**`[🌶️ 이 필드를 추출 변수로 추가]`**)하거나 **`[+ 응답에서 변수 추출]`** 버튼을 눌러 정확한 JsonPath를 자동 계산해 추출 규칙에 즉시 추가할 수 있습니다.
   - 네트워크 오류, 기대 상태 코드 불일치, 필수 추출 실패 시 즉시 `ABORTED`로 중단(Fail-Fast)하고 요청/응답 전문과 상세 로그를 출력합니다.
-- **🌐 플러그인 자체 `KO / EN` 즉시 언어 전환**
-  - OS/IDE 로케일과 무관하게 상단 툴바 우측의 **`[KO / EN]`** 스위치로 재시작 없이 모든 UI 텍스트를 즉시 한국어 ↔ 영어로 전환할 수 있습니다.
+- **⏱️ 내장 동적 시간·랜덤 변수 & 변수 치트시트 / 우클릭 삽입**
+  - 별도 변수 선언 없이 실행 직전 실시간으로 평가되는 8종 동적 변수(`{{$isoTimestamp}}`, `{{$kstNow}}`, `{{$kstCompact}}`, `{{$uuid}}` 등)를 지원합니다.
+  - 상단 툴바 **`[{{$}} 변수 도움말]`** 치트시트에서 실시간 평가 값과 이전 스텝 추출 변수를 원클릭 복사할 수 있으며, URL·Params(Value)·Headers(Value)·Body(JSON) 입력창에서 우클릭(**`🌶️ 동적/추출 변수 삽입 ▶`**)으로 커서 위치에 즉시 삽입할 수 있습니다.
+- **📋 단건 API & 전체 시나리오 cURL 복사 (`Copy as cURL`)**
+  - 상단 툴바 **`[cURL 복사 ▾]`** 메뉴에서 현재 스텝 단건 cURL 또는 전체 시나리오 순차 실행 멀티라인 cURL 스크립트(활성 `Params`·동적/추출 변수 치환 반영)를 클립보드에 즉시 복사할 수 있습니다.
+- **🗂️ 시나리오 관리, 반응형 툴바 & 보안 & `KO / EN` 전환**
+  - 민감정보(`.maekom/secrets.local.json`)와 시나리오 파일(`.maekom/scenarios/*.json`)을 분리 관리하며, **`[✎ 이름 변경]`**(중복 덮어쓰기 방지) 및 시나리오 전환 시 변경사항 자동 감지(Dirty Check) 저장 확인 팝업을 제공합니다.
+  - `WrapLayout` 반응형 툴바로 ToolWindow 가로 폭을 줄여도 모든 버튼이 잘리지 않고 자동 줄바꿈되며, **`[KO / EN]`** 스위치로 재시작 없이 한국어 ↔ 영어를 즉시 전환할 수 있습니다.
+
+---
+
+## ⏱️ 내장 동적 변수 레퍼런스 (`{{$...}}`)
+
+URL, `Params`, `Headers`, `Body (JSON)` 어디서나 사용할 수 있으며, 요청 실행 및 cURL 내보내기 직전마다 실시간으로 평가됩니다.
+
+| 변수명 | 설명 | 실시간 출력 예시 |
+| --- | --- | --- |
+| `{{$isoTimestamp}}` | UTC 기준 현재 ISO-8601 시각 | `2026-11-19T05:56:00.123Z` |
+| `{{$timestamp}}` | 현재 Unix Epoch 초 (10자리) | `1795067760` |
+| `{{$timestampMs}}` | 현재 Unix Epoch 밀리초 (13자리) | `1795067760123` |
+| `{{$kstNow}}` | KST(`Asia/Seoul`) 기준 `yyyy-MM-dd HH:mm:ss` | `2026-11-19 14:56:00` |
+| `{{$kstDate}}` | KST 기준 날짜 `yyyy-MM-dd` | `2026-11-19` |
+| `{{$kstCompact}}` | KST 기준 숫자 타임스탬프 `yyyyMMddHHmmss` (거래/주문번호용) | `20261119145600` |
+| `{{$kstIso}}` | KST 기준 ISO-8601 오프셋 포맷 (`+09:00`) | `2026-11-19T14:56:00+09:00` |
+| `{{$uuid}}` | 무작위 UUID v4 문자열 | `550e8400-e29b-41d4-a716-446655440000` |
+
+> **변수 치환 우선순위:** 내장 동적 변수(`{{$...}}`) > 실행 컨텍스트(이전 스텝 추출 변수) > `.maekom/secrets.local.json` > 시나리오 전역 변수
 
 ---
 
@@ -43,6 +68,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.1.2` | 2026-11-19 | 반응형 툴바, 시나리오 이름 변경, 내장 시간변수(KST/UTC), 응답 원클릭 변수추출 및 cURL 복사 추가 | [maekom-api-runner-0.1.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.2/maekom-api-runner-0.1.2.zip) |
 | `v0.1.1` | 2026-11-19 | Spring `@ModelAttribute`/POJO 자동 추출 & `Params` 전용 탭, 시나리오 전환 Dirty Check, `KO / EN` 언어 전환 스위치 추가 | [maekom-api-runner-0.1.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.1/maekom-api-runner-0.1.1.zip) |
 | `v0.1.0` | 2026-11-19 | 최초 릴리즈 (고추 Gutter 마커, `@RequestBody` 자동 샘플링, 시나리오 체이닝 & Fail-Fast, 3단 분할 ToolWindow UI) | [maekom-api-runner-0.1.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.0/maekom-api-runner-0.1.0.zip) |
 <!-- VERSION_HISTORY_END -->

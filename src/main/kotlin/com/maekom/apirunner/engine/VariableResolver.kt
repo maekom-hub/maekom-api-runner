@@ -3,15 +3,96 @@ package com.maekom.apirunner.engine
 import com.maekom.apirunner.model.QueryParamItem
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.UUID
+
+// [v0.1.2] 내장 동적 시간·랜덤 변수({{$isoTimestamp}}, {{$kstNow}}, {{$uuid}} 등) 실시간 평가 기능 추가
+// 변경 의도: 별도 변수 선언 없이 URL/Params/Headers/Body 어디서나 실시간 타임스탬프·거래번호·UUID를 즉시 치환
+data class DynamicVariableSpec(
+    val name: String,
+    val token: String,
+    val descKey: String,
+    val evaluator: () -> String
+)
 
 /**
- * Resolves {{variableName}} placeholders with strict priority:
- * 1. runtimeContext (variables extracted during scenario execution)
- * 2. secrets (.maekom/secrets.local.json)
- * 3. globalVariables (scenario global variables)
+ * Resolves {{variableName}} and built-in dynamic {{$...}} placeholders with priority:
+ * 1. Built-in dynamic variables ({{$isoTimestamp}}, {{$timestamp}}, {{$kstNow}}, {{$uuid}}, etc.)
+ * 2. runtimeContext (variables extracted during scenario execution)
+ * 3. secrets (.maekom/secrets.local.json)
+ * 4. globalVariables (scenario global variables)
  */
 object VariableResolver {
-    private val PLACEHOLDER_REGEX = Regex("""\{\{\s*([a-zA-Z0-9_.-]+)\s*}}""")
+    private val PLACEHOLDER_REGEX = Regex("""\{\{\s*(\$?[a-zA-Z0-9_.-]+)\s*}}""")
+
+    private val KST_ZONE: ZoneId = ZoneId.of("Asia/Seoul")
+    private val UTC_ISO_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
+    private val KST_NOW_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    private val KST_DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    private val KST_COMPACT_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+    private val KST_ISO_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+
+    val DYNAMIC_VARIABLES: List<DynamicVariableSpec> = listOf(
+        DynamicVariableSpec(
+            name = "\$isoTimestamp",
+            token = "{{\$isoTimestamp}}",
+            descKey = "dynvar.isoTimestamp",
+            evaluator = { UTC_ISO_FMT.format(Instant.now()) }
+        ),
+        DynamicVariableSpec(
+            name = "\$timestamp",
+            token = "{{\$timestamp}}",
+            descKey = "dynvar.timestamp",
+            evaluator = { Instant.now().epochSecond.toString() }
+        ),
+        DynamicVariableSpec(
+            name = "\$timestampMs",
+            token = "{{\$timestampMs}}",
+            descKey = "dynvar.timestampMs",
+            evaluator = { Instant.now().toEpochMilli().toString() }
+        ),
+        DynamicVariableSpec(
+            name = "\$kstNow",
+            token = "{{\$kstNow}}",
+            descKey = "dynvar.kstNow",
+            evaluator = { ZonedDateTime.now(KST_ZONE).format(KST_NOW_FMT) }
+        ),
+        DynamicVariableSpec(
+            name = "\$kstDate",
+            token = "{{\$kstDate}}",
+            descKey = "dynvar.kstDate",
+            evaluator = { ZonedDateTime.now(KST_ZONE).format(KST_DATE_FMT) }
+        ),
+        DynamicVariableSpec(
+            name = "\$kstCompact",
+            token = "{{\$kstCompact}}",
+            descKey = "dynvar.kstCompact",
+            evaluator = { ZonedDateTime.now(KST_ZONE).format(KST_COMPACT_FMT) }
+        ),
+        DynamicVariableSpec(
+            name = "\$kstIso",
+            token = "{{\$kstIso}}",
+            descKey = "dynvar.kstIso",
+            evaluator = { ZonedDateTime.now(KST_ZONE).format(KST_ISO_FMT) }
+        ),
+        DynamicVariableSpec(
+            name = "\$uuid",
+            token = "{{\$uuid}}",
+            descKey = "dynvar.uuid",
+            evaluator = { UUID.randomUUID().toString() }
+        )
+    )
+
+    private val DYNAMIC_VAR_MAP: Map<String, DynamicVariableSpec> =
+        DYNAMIC_VARIABLES.associateBy { it.name }
+
+    fun evaluateDynamicVariable(key: String): String? {
+        return DYNAMIC_VAR_MAP[key]?.evaluator?.invoke()
+    }
 
     fun resolve(
         template: String,
@@ -167,6 +248,9 @@ object VariableResolver {
         secrets: Map<String, String>,
         globalVariables: Map<String, String>
     ): String? {
+        if (key.startsWith("$")) {
+            evaluateDynamicVariable(key)?.let { return it }
+        }
         return runtimeContext[key]
             ?: secrets[key]
             ?: globalVariables[key]

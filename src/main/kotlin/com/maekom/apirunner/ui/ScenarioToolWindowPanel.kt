@@ -11,14 +11,18 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.popup.PopupStep
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -27,6 +31,9 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.WrapLayout
+import com.maekom.apirunner.engine.CurlExporter
+import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunListener
 import com.maekom.apirunner.engine.ScenarioRunner
 import com.maekom.apirunner.i18n.I18nManager
@@ -42,6 +49,7 @@ import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepExecutionResult
 import com.maekom.apirunner.model.StepStatus
 import com.maekom.apirunner.psi.PsiEndpointExtractor
+import com.maekom.apirunner.storage.RenameStatus
 import com.maekom.apirunner.storage.ScenarioStorageService
 import java.awt.BorderLayout
 import java.awt.Color
@@ -49,12 +57,20 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Point
+import java.awt.datatransfer.StringSelection
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -65,14 +81,9 @@ import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-/**
- * 3-Pane Split ToolWindow UI for Maekom API Runner:
- * - Top Toolbar: Scenario selector (with dirty check), Save, New, Import/Export, Global Headers/Secrets,
- *   BaseURL, Ignore SSL, Run All, Stop, and [KO / EN] language toggle switch on the far right
- * - Left Pane: Step list with active checkboxes, status icons, Method+Path, reorder/duplicate/delete/add buttons
- * - Center Pane: Step editor (Method, URL, Expected Status, Single Run, Params / Body (JSON) / Headers / Extract Rules tabs)
- * - Right Pane: Result viewer (HTTP Status, Duration ms, Extracted Variables, Formatted Response JSON/Raw Text, Error Logs)
- */
+// [v0.1.2] 반응형 WrapLayout 툴바, 시나리오 이름 변경(Rename), 동적·추출 변수 치트시트 및 우클릭 삽입,
+//          JsonPath 가이드 & 응답 본문 원클릭 추출 규칙 추가, 단건/전체 시나리오 cURL 복사 기능 통합
+// 변경 의도: 좁은 ToolWindow 폭에서도 버튼 잘림을 방지하고, 실전 API 체이닝 작성·공유 생산성을 극대화
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     companion object {
@@ -100,23 +111,27 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val stepResults = mutableMapOf<String, StepExecutionResult>()
     private val lastRuntimeContext = linkedMapOf<String, String>()
 
-    // --- Top Toolbar Controls ---
+    // --- Top Toolbar Controls (WrapLayout 반응형 배치) ---
+    private val topToolbarPanel = JPanel(WrapLayout(FlowLayout.LEFT, 4, 4))
     private val scenarioLabel = JBLabel()
     private val scenarioComboModel = DefaultComboBoxModel<String>()
     private val scenarioComboBox = ComboBox(scenarioComboModel)
+    private val renameScenarioBtn = JButton()
     private val saveBtn = JButton()
     private val newScenarioBtn = JButton()
     private val importExportBtn = JButton()
     private val globalConfigBtn = JButton()
+    private val variablesHelpBtn = JButton()
+    private val curlCopyBtn = JButton()
     private val baseUrlLabel = JBLabel()
-    private val baseUrlField = JBTextField(18)
+    private val baseUrlField = JBTextField(16)
     private val ignoreSslCheckbox = JBCheckBox()
     private val runAllBtn = JButton()
     private val stopBtn = JButton()
     private val languageToggleBtn = JButton()
 
     // Quick-Single Mode Banner
-    private val quickModeBanner = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
+    private val quickModeBanner = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4))
     private val quickModeLabel = JBLabel()
     private val promoteToScenarioBtn = JButton()
     private val exitQuickModeBtn = JButton()
@@ -140,7 +155,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val editorTabs = JBTabbedPane()
 
     // Params Tab: [체크박스(전송 여부)] | [Key] | [Value] | [Description]
-    private val paramsTableModel = object : DefaultTableModel(arrayOf("전송", "Key", "Value", "Description"), 0) {
+    private val paramsTableModel = object : DefaultTableModel(arrayOf<Any>("전송", "Key", "Value", "Description"), 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
             if (columnIndex == 0) java.lang.Boolean::class.java else String::class.java
 
@@ -161,7 +176,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val bodyHintLabel = JBLabel()
 
     // Headers Tab
-    private val headersTableModel = object : DefaultTableModel(arrayOf("Header Key", "Value"), 0) {
+    private val headersTableModel = object : DefaultTableModel(arrayOf<Any>("Header Key", "Value"), 0) {
         override fun isCellEditable(row: Int, column: Int): Boolean = true
     }
     private val headersTable = JBTable(headersTableModel)
@@ -169,7 +184,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val removeHeaderBtn = JButton()
 
     // Extract Rules Tab
-    private val extractRulesTableModel = object : DefaultTableModel(arrayOf("변수명 (varName)", "JsonPath", "필수"), 0) {
+    private val extractRulesTableModel = object : DefaultTableModel(arrayOf<Any>("변수명 (varName)", "JsonPath", "필수"), 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
             if (columnIndex == 2) java.lang.Boolean::class.java else String::class.java
 
@@ -178,6 +193,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val extractRulesTable = JBTable(extractRulesTableModel)
     private val addRuleBtn = JButton()
     private val removeRuleBtn = JButton()
+    private val extractGuideBtn = JButton()
     private val extractHintLabel = JBLabel()
 
     // --- Right Pane: Result Viewer ---
@@ -189,8 +205,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val resultTabs = JBTabbedPane()
     private val extractedHeaderLabel = JBLabel()
     private val responseHeaderLabel = JBLabel()
+    private val extractFromResponseBtn = JButton()
 
-    private val extractedVarsModel = object : DefaultTableModel(arrayOf("추출 변수명", "값"), 0) {
+    private val extractedVarsModel = object : DefaultTableModel(arrayOf<Any>("추출 변수명", "값"), 0) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
     private val extractedVarsTable = JBTable(extractedVarsModel)
@@ -212,6 +229,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     init {
         buildLayout()
         wireEvents()
+        installContextMenus()
         applyTranslations()
         initializeScenarios()
 
@@ -239,41 +257,50 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         add(mainSplitter, BorderLayout.CENTER)
+
+        // [v0.1.2] 창 가로 폭 변경 시 WrapLayout 툴바 높이를 즉시 재계산해 버튼 잘림 방지
+        addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent?) {
+                topToolbarPanel.revalidate()
+                quickModeBanner.revalidate()
+                revalidate()
+            }
+        })
     }
 
     private fun buildTopToolbar(): JPanel {
-        val toolbarContainer = JPanel(BorderLayout())
-        toolbarContainer.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
+        topToolbarPanel.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
 
-        val leftControls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4))
-        scenarioComboBox.preferredSize = Dimension(150, 28)
-        baseUrlField.preferredSize = Dimension(180, 28)
+        scenarioComboBox.preferredSize = Dimension(145, 28)
+        baseUrlField.preferredSize = Dimension(170, 28)
         stopBtn.isEnabled = false
+
+        renameScenarioBtn.margin = JBUI.insets(2, 7)
+        variablesHelpBtn.margin = JBUI.insets(2, 7)
+        curlCopyBtn.margin = JBUI.insets(2, 7)
+        languageToggleBtn.font = languageToggleBtn.font.deriveFont(Font.BOLD)
+        languageToggleBtn.margin = JBUI.insets(2, 8)
 
         runAllBtn.foreground = JBColor(Color(0x1B, 0x7F, 0x3A), Color(0x6C, 0xD9, 0x7E))
         stopBtn.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
 
-        leftControls.add(scenarioLabel)
-        leftControls.add(scenarioComboBox)
-        leftControls.add(saveBtn)
-        leftControls.add(newScenarioBtn)
-        leftControls.add(importExportBtn)
-        leftControls.add(globalConfigBtn)
-        leftControls.add(baseUrlLabel)
-        leftControls.add(baseUrlField)
-        leftControls.add(ignoreSslCheckbox)
-        leftControls.add(runAllBtn)
-        leftControls.add(stopBtn)
+        topToolbarPanel.add(scenarioLabel)
+        topToolbarPanel.add(scenarioComboBox)
+        topToolbarPanel.add(renameScenarioBtn)
+        topToolbarPanel.add(saveBtn)
+        topToolbarPanel.add(newScenarioBtn)
+        topToolbarPanel.add(importExportBtn)
+        topToolbarPanel.add(globalConfigBtn)
+        topToolbarPanel.add(variablesHelpBtn)
+        topToolbarPanel.add(curlCopyBtn)
+        topToolbarPanel.add(baseUrlLabel)
+        topToolbarPanel.add(baseUrlField)
+        topToolbarPanel.add(ignoreSslCheckbox)
+        topToolbarPanel.add(runAllBtn)
+        topToolbarPanel.add(stopBtn)
+        topToolbarPanel.add(languageToggleBtn)
 
-        val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 4))
-        languageToggleBtn.font = languageToggleBtn.font.deriveFont(Font.BOLD)
-        languageToggleBtn.margin = JBUI.insets(3, 8)
-        rightControls.add(languageToggleBtn)
-
-        toolbarContainer.add(leftControls, BorderLayout.CENTER)
-        toolbarContainer.add(rightControls, BorderLayout.EAST)
-
-        return toolbarContainer
+        return topToolbarPanel
     }
 
     private fun buildQuickModeBanner(): JPanel {
@@ -317,7 +344,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         panel.add(JBScrollPane(stepTable), BorderLayout.CENTER)
 
-        val bottomBar = JPanel(FlowLayout(FlowLayout.LEFT, 3, 4))
+        val bottomBar = createWrapBar()
         moveUpBtn.margin = JBUI.insets(2, 6)
         moveDownBtn.margin = JBUI.insets(2, 6)
         duplicateStepBtn.margin = JBUI.insets(2, 6)
@@ -338,11 +365,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        val topBar = JPanel(BorderLayout(6, 0))
-        methodComboBox.preferredSize = Dimension(92, 28)
+        val topBar = JPanel(BorderLayout(6, 4))
+        methodComboBox.preferredSize = Dimension(88, 28)
 
         val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        expectedStatusField.preferredSize = Dimension(64, 28)
+        expectedStatusField.preferredSize = Dimension(58, 28)
         rightControls.add(expectedStatusLabel)
         rightControls.add(expectedStatusField)
         rightControls.add(runSingleBtn)
@@ -369,7 +396,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         val paramsPanel = JPanel(BorderLayout(0, 4))
         paramsPanel.add(JBScrollPane(paramsTable), BorderLayout.CENTER)
-        val paramsBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        val paramsBtnBar = createWrapBar()
         paramsHintLabel.foreground = JBColor.GRAY
         paramsBtnBar.add(addParamBtn)
         paramsBtnBar.add(removeParamBtn)
@@ -379,7 +406,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         // Tab 1: Body (JSON)
         val bodyPanel = JPanel(BorderLayout(0, 4))
         bodyPanel.add(JBScrollPane(bodyTextArea), BorderLayout.CENTER)
-        val bodyBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        val bodyBtnBar = createWrapBar()
         bodyHintLabel.foreground = JBColor.GRAY
         bodyBtnBar.add(formatJsonBtn)
         bodyBtnBar.add(bodyHintLabel)
@@ -393,12 +420,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         val headersPanel = JPanel(BorderLayout(0, 4))
         headersPanel.add(JBScrollPane(headersTable), BorderLayout.CENTER)
-        val headersBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        val headersBtnBar = createWrapBar()
         headersBtnBar.add(addHeaderBtn)
         headersBtnBar.add(removeHeaderBtn)
         headersPanel.add(headersBtnBar, BorderLayout.SOUTH)
 
-        // Tab 3: Extract Rules
+        // Tab 3: Extract Rules (+ Guide button)
         extractRulesTable.apply {
             rowHeight = 24
             putClientProperty("terminateEditOnFocusLost", true)
@@ -411,10 +438,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         val extractPanel = JPanel(BorderLayout(0, 4))
         extractPanel.add(JBScrollPane(extractRulesTable), BorderLayout.CENTER)
-        val extractBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        val extractBtnBar = createWrapBar()
+        extractGuideBtn.margin = JBUI.insets(2, 7)
         extractHintLabel.foreground = JBColor.GRAY
         extractBtnBar.add(addRuleBtn)
         extractBtnBar.add(removeRuleBtn)
+        extractBtnBar.add(extractGuideBtn)
         extractBtnBar.add(extractHintLabel)
         extractPanel.add(extractBtnBar, BorderLayout.SOUTH)
 
@@ -431,7 +460,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        val summaryBar = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4))
+        val summaryBar = createWrapBar()
         summaryBar.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
         statusBadgeLabel.font = statusBadgeLabel.font.deriveFont(Font.BOLD)
         durationLabel.foreground = JBColor.GRAY
@@ -459,8 +488,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4)
         }
+        extractFromResponseBtn.margin = JBUI.insets(2, 7)
+
+        val responseTopBar = createWrapBar()
+        responseTopBar.add(responseHeaderLabel)
+        responseTopBar.add(extractFromResponseBtn)
+
         val responsePanel = JPanel(BorderLayout())
-        responsePanel.add(responseHeaderLabel, BorderLayout.NORTH)
+        responsePanel.add(responseTopBar, BorderLayout.NORTH)
         responsePanel.add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
 
         val resultSplitter = OnePixelSplitter(true, 0.26f).apply {
@@ -478,6 +513,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         return panel
     }
 
+    private fun createWrapBar(): JPanel {
+        val bar = JPanel(WrapLayout(FlowLayout.LEFT, 4, 3))
+        bar.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent?) {
+                bar.revalidate()
+            }
+        })
+        return bar
+    }
+
     private fun wireEvents() {
         // Language toggle switch [KO / EN]
         languageToggleBtn.addActionListener {
@@ -492,10 +537,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             handleScenarioSwitchRequest(selectedName)
         }
 
+        renameScenarioBtn.addActionListener { renameCurrentScenarioDialog() }
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
         newScenarioBtn.addActionListener { createNewScenarioDialog() }
         importExportBtn.addActionListener { showImportExportMenu() }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
+        variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
+        curlCopyBtn.addActionListener { showCurlCopyMenu() }
 
         baseUrlField.document.addDocumentListener(simpleDocListener {
             if (!isUpdatingUi) {
@@ -562,7 +610,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         // Params Tab buttons
         addParamBtn.addActionListener {
             stopTableEditing(paramsTable)
-            paramsTableModel.addRow(arrayOf(true, "", "", ""))
+            paramsTableModel.addRow(arrayOf<Any>(true, "", "", ""))
             val row = paramsTableModel.rowCount - 1
             paramsTable.setRowSelectionInterval(row, row)
             paramsTable.editCellAt(row, 1)
@@ -597,7 +645,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         // Headers Tab buttons
         addHeaderBtn.addActionListener {
             stopTableEditing(headersTable)
-            headersTableModel.addRow(arrayOf("", ""))
+            headersTableModel.addRow(arrayOf<Any>("", ""))
             val row = headersTableModel.rowCount - 1
             headersTable.setRowSelectionInterval(row, row)
             headersTable.editCellAt(row, 0)
@@ -615,7 +663,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         // Extract Rules Tab buttons
         addRuleBtn.addActionListener {
             stopTableEditing(extractRulesTable)
-            extractRulesTableModel.addRow(arrayOf("token", "$.data.token", true))
+            extractRulesTableModel.addRow(arrayOf<Any>("token", "$.data.token", true))
             val row = extractRulesTableModel.rowCount - 1
             extractRulesTable.setRowSelectionInterval(row, row)
             extractRulesTable.editCellAt(row, 0)
@@ -628,6 +676,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 extractRulesTableModel.removeRow(rows[i])
             }
             syncEditorToCurrentStep()
+        }
+        extractGuideBtn.addActionListener {
+            ExtractGuideDialog(project).show()
+        }
+
+        // Right Pane: One-click Extract from Response button
+        extractFromResponseBtn.addActionListener {
+            openExtractRuleFromResponse(useCaretOffset = true)
         }
 
         // Center Pane auto-sync to step model
@@ -653,6 +709,294 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
+    // [v0.1.2] URL/Params/Headers/Body 우클릭 변수 삽입 메뉴 및 응답 본문 JSON 원클릭 추출 컨텍스트 메뉴 등록
+    private fun installContextMenus() {
+        val varsProvider: () -> List<ScenarioVariableItem> = { collectScenarioVariablesForCurrentStep() }
+
+        VariableContextMenuSupport.installOnTextComponent(urlField, varsProvider)
+        VariableContextMenuSupport.installOnTextComponent(bodyTextArea, varsProvider)
+        VariableContextMenuSupport.installOnTableValueColumn(
+            table = paramsTable,
+            valueColumnIndex = 2,
+            scenarioVariablesProvider = varsProvider,
+            onValueUpdated = { syncEditorToCurrentStep() }
+        )
+        VariableContextMenuSupport.installOnTableValueColumn(
+            table = headersTable,
+            valueColumnIndex = 1,
+            scenarioVariablesProvider = varsProvider,
+            onValueUpdated = { syncEditorToCurrentStep() }
+        )
+
+        // Response body right-click menu: "🌶️ 이 필드를 추출 변수로 추가"
+        responseBodyArea.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = maybeShowResponseMenu(e)
+            override fun mouseReleased(e: MouseEvent) = maybeShowResponseMenu(e)
+
+            private fun maybeShowResponseMenu(e: MouseEvent) {
+                if (!e.isPopupTrigger) return
+                // Move caret to clicked position so JsonPathLocator traces the clicked line accurately
+                val clickedOffset = responseBodyArea.viewToModel2D(e.point)
+                if (clickedOffset >= 0) {
+                    responseBodyArea.caretPosition = clickedOffset
+                }
+
+                val popup = JPopupMenu()
+                val extractItem = JMenuItem(I18nManager.t("result.context.addExtractRule")).apply {
+                    isEnabled = responseBodyArea.text.trim().isNotEmpty() && getActiveEditableStep() != null
+                    addActionListener { openExtractRuleFromResponse(useCaretOffset = true) }
+                }
+                popup.add(extractItem)
+                popup.addSeparator()
+                popup.add(JMenuItem(I18nManager.t("vars.menu.copy")).apply {
+                    isEnabled = responseBodyArea.selectedText != null
+                    addActionListener { responseBodyArea.copy() }
+                })
+                popup.show(responseBodyArea, e.x, e.y)
+            }
+        })
+    }
+
+    /**
+     * Collects extracted variables declared in earlier steps (or already populated in runtimeContext)
+     * alongside scenario global variables.
+     */
+    private fun collectScenarioVariablesForCurrentStep(): List<ScenarioVariableItem> {
+        val result = linkedMapOf<String, ScenarioVariableItem>()
+        val activeIndex = if (isQuickSingleMode) currentScenario.steps.size else stepTable.selectedRow.coerceAtLeast(0)
+
+        // 1. Variables declared in extractRules of preceding steps
+        for (i in 0 until activeIndex.coerceAtMost(currentScenario.steps.size)) {
+            for (rule in currentScenario.steps[i].extractRules) {
+                val varName = rule.varName.trim()
+                if (varName.isNotEmpty() && !result.containsKey(varName)) {
+                    result[varName] = ScenarioVariableItem(
+                        name = varName,
+                        token = "{{$varName}}",
+                        isExtracted = true,
+                        currentValue = lastRuntimeContext[varName]
+                    )
+                }
+            }
+        }
+
+        // 2. Any runtime extracted variables from recent runs
+        for ((k, v) in lastRuntimeContext) {
+            if (!result.containsKey(k)) {
+                result[k] = ScenarioVariableItem(
+                    name = k,
+                    token = "{{$k}}",
+                    isExtracted = true,
+                    currentValue = v
+                )
+            }
+        }
+
+        // 3. Scenario global variables
+        for ((k, v) in currentScenario.globalVariables) {
+            val trimmed = k.trim()
+            if (trimmed.isNotEmpty() && !result.containsKey(trimmed)) {
+                result[trimmed] = ScenarioVariableItem(
+                    name = trimmed,
+                    token = "{{$trimmed}}",
+                    isExtracted = false,
+                    currentValue = v
+                )
+            }
+        }
+
+        return result.values.toList()
+    }
+
+    // --- Feature 2: Scenario Rename ---
+
+    private fun renameCurrentScenarioDialog() {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
+
+        val inputName = Messages.showInputDialog(
+            project,
+            I18nManager.t("dialog.rename.msg"),
+            I18nManager.t("dialog.rename.title"),
+            Messages.getQuestionIcon(),
+            currentScenario.name,
+            null
+        )?.trim()
+        if (inputName.isNullOrBlank()) return
+        if (inputName == currentScenario.name) return
+
+        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
+        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+
+        val result = storage.renameScenario(currentScenario, inputName)
+        when (result.status) {
+            RenameStatus.SUCCESS -> {
+                markScenarioClean()
+                refreshScenarioComboBox(currentScenario.name)
+                scenarioStatusLabel.text = I18nManager.t("status.renamed", result.savedFile?.name ?: currentScenario.name)
+                scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            }
+            RenameStatus.ALREADY_EXISTS -> {
+                Messages.showWarningDialog(
+                    project,
+                    I18nManager.t("dialog.rename.exists.msg", result.sanitizedName),
+                    I18nManager.t("dialog.rename.exists.title")
+                )
+            }
+            RenameStatus.INVALID_NAME -> {
+                Messages.showWarningDialog(
+                    project,
+                    I18nManager.t("dialog.rename.invalid.msg"),
+                    I18nManager.t("dialog.rename.title")
+                )
+            }
+            RenameStatus.FAILED -> {
+                Messages.showErrorDialog(
+                    project,
+                    I18nManager.t("dialog.rename.failed.msg"),
+                    I18nManager.t("dialog.error.title")
+                )
+            }
+        }
+    }
+
+    // --- Feature 4: Variable Cheat-Sheet Popup ---
+
+    private fun openVariablesCheatSheet() {
+        VariableCheatSheetDialog(project) { collectScenarioVariablesForCurrentStep() }.show()
+    }
+
+    // --- Feature 5: One-Click Response JSON Field Extraction ---
+
+    private fun openExtractRuleFromResponse(useCaretOffset: Boolean) {
+        if (getActiveEditableStep() == null) {
+            Messages.showInfoMessage(project, I18nManager.t("extractDialog.noStep.msg"), "Maekom API Runner")
+            return
+        }
+
+        val jsonText = responseBodyArea.text
+        val candidates = JsonPathLocator.extractAllCandidates(jsonText)
+        if (candidates.isEmpty()) {
+            Messages.showWarningDialog(
+                project,
+                I18nManager.t("extractDialog.noJson.msg"),
+                I18nManager.t("extractDialog.noJson.title")
+            )
+            return
+        }
+
+        val initialCandidate = if (useCaretOffset) {
+            JsonPathLocator.locateAtOffset(jsonText, responseBodyArea.caretPosition)
+        } else {
+            null
+        }
+
+        val dialog = AddExtractRuleDialog(project, candidates, initialCandidate)
+        if (dialog.showAndGet()) {
+            val newRule = dialog.toExtractRule()
+            stopTableEditing(extractRulesTable)
+            extractRulesTableModel.addRow(arrayOf<Any>(newRule.varName, newRule.jsonPath, newRule.required))
+            val lastRow = extractRulesTableModel.rowCount - 1
+            if (lastRow >= 0) {
+                extractRulesTable.setRowSelectionInterval(lastRow, lastRow)
+            }
+            syncEditorToCurrentStep()
+            editorTabs.selectedIndex = TAB_EXTRACT
+
+            val statusMsg = I18nManager.t("status.extractRuleAdded", newRule.varName, newRule.jsonPath)
+            scenarioStatusLabel.text = statusMsg
+            scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            showBalloon(extractFromResponseBtn, statusMsg, MessageType.INFO)
+        }
+    }
+
+    // --- Feature 6: Single Step & Full Scenario Copy as cURL ---
+
+    private fun showCurlCopyMenu() {
+        val copyStepLabel = I18nManager.t("curl.menu.step")
+        val copyScenarioLabel = I18nManager.t("curl.menu.scenario")
+        val actions = listOf(copyStepLabel, copyScenarioLabel)
+
+        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("curl.menu.title"), actions) {
+            override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
+                return doFinalStep {
+                    when (selectedValue) {
+                        copyStepLabel -> copyCurrentStepAsCurl()
+                        copyScenarioLabel -> copyFullScenarioAsCurl()
+                    }
+                }
+            }
+        }
+        JBPopupFactory.getInstance()
+            .createListPopup(popupStep)
+            .showUnderneathOf(curlCopyBtn)
+    }
+
+    private fun copyCurrentStepAsCurl() {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
+
+        val activeStep = getActiveEditableStep()
+        if (activeStep == null) {
+            Messages.showInfoMessage(project, I18nManager.t("curl.noStep.msg"), "Maekom API Runner")
+            return
+        }
+
+        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
+        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+
+        val secrets = storage.loadSecrets()
+        val curl = CurlExporter.exportStep(
+            step = activeStep,
+            scenario = currentScenario,
+            runtimeContext = lastRuntimeContext,
+            secrets = secrets
+        )
+        CopyPasteManager.getInstance().setContents(StringSelection(curl))
+
+        scenarioStatusLabel.text = I18nManager.t("status.curlCopied", activeStep.displayTitle())
+        scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+        showBalloon(curlCopyBtn, I18nManager.t("curl.copied.step.msg"), MessageType.INFO)
+    }
+
+    private fun copyFullScenarioAsCurl() {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
+
+        if (currentScenario.steps.isEmpty()) {
+            Messages.showInfoMessage(project, I18nManager.t("curl.noScenarioSteps.msg"), "Maekom API Runner")
+            return
+        }
+
+        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
+        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+
+        val secrets = storage.loadSecrets()
+        val script = CurlExporter.exportScenario(
+            scenario = currentScenario,
+            runtimeContext = lastRuntimeContext,
+            secrets = secrets
+        )
+        CopyPasteManager.getInstance().setContents(StringSelection(script))
+
+        val msg = I18nManager.t("curl.copied.scenario.msg", currentScenario.steps.size)
+        scenarioStatusLabel.text = I18nManager.t("status.curlCopied", currentScenario.name)
+        scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+        showBalloon(curlCopyBtn, msg, MessageType.INFO)
+    }
+
+    private fun showBalloon(anchor: Component, message: String, type: MessageType) {
+        try {
+            val balloon = JBPopupFactory.getInstance()
+                .createHtmlTextBalloonBuilder(message, type, null)
+                .setFadeoutTime(3000)
+                .createBalloon()
+            balloon.show(RelativePoint(anchor, Point(anchor.width / 2, anchor.height)), Balloon.Position.below)
+        } catch (_: Exception) {
+            // Safe ignore in headless environments
+        }
+    }
+
     // --- KO / EN Instant UI Translation ---
 
     fun applyTranslations() {
@@ -660,10 +1004,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         // Top toolbar
         scenarioLabel.text = I18nManager.t("toolbar.scenario")
+        renameScenarioBtn.text = I18nManager.t("toolbar.rename")
+        renameScenarioBtn.toolTipText = I18nManager.t("toolbar.rename.tooltip")
         saveBtn.text = I18nManager.t("toolbar.save")
         newScenarioBtn.text = I18nManager.t("toolbar.newScenario")
         importExportBtn.text = I18nManager.t("toolbar.importExport")
         globalConfigBtn.text = I18nManager.t("toolbar.globalConfig")
+        variablesHelpBtn.text = I18nManager.t("toolbar.variables")
+        variablesHelpBtn.toolTipText = I18nManager.t("toolbar.variables.tooltip")
+        curlCopyBtn.text = I18nManager.t("toolbar.curl")
+        curlCopyBtn.toolTipText = I18nManager.t("toolbar.curl.tooltip")
         baseUrlLabel.text = I18nManager.t("toolbar.baseUrl")
         baseUrlField.toolTipText = I18nManager.t("toolbar.baseUrl.tooltip")
         ignoreSslCheckbox.text = I18nManager.t("toolbar.ignoreSsl")
@@ -735,6 +1085,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         )
         addRuleBtn.text = I18nManager.t("extract.add")
         removeRuleBtn.text = I18nManager.t("extract.remove")
+        extractGuideBtn.text = I18nManager.t("extract.guide")
+        extractGuideBtn.toolTipText = I18nManager.t("extract.guide.tooltip")
         extractHintLabel.text = I18nManager.t("extract.hint")
 
         // Right pane
@@ -744,6 +1096,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         resultTabs.setTitleAt(1, I18nManager.t("result.tab.log"))
         extractedHeaderLabel.text = I18nManager.t("result.extractedHeader")
         responseHeaderLabel.text = I18nManager.t("result.responseHeader")
+        extractFromResponseBtn.text = I18nManager.t("result.extractFromResponse")
+        extractFromResponseBtn.toolTipText = I18nManager.t("result.extractFromResponse.tooltip")
         updateTableHeaders(
             extractedVarsTable,
             I18nManager.t("result.extractedCol.name"),
@@ -760,6 +1114,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             }
         }
         updateDirtyIndicator()
+        topToolbarPanel.revalidate()
         revalidate()
         repaint()
     }
@@ -1276,7 +1631,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         paramsTableModel.rowCount = 0
         for (param in step.queryParams) {
-            paramsTableModel.addRow(arrayOf(param.enabled, param.key, param.value, param.description))
+            paramsTableModel.addRow(arrayOf<Any>(param.enabled, param.key, param.value, param.description))
         }
 
         bodyTextArea.text = step.body
@@ -1284,12 +1639,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         headersTableModel.rowCount = 0
         for ((k, v) in step.headers) {
-            headersTableModel.addRow(arrayOf(k, v))
+            headersTableModel.addRow(arrayOf<Any>(k, v))
         }
 
         extractRulesTableModel.rowCount = 0
         for (rule in step.extractRules) {
-            extractRulesTableModel.addRow(arrayOf(rule.varName, rule.jsonPath, rule.required))
+            extractRulesTableModel.addRow(arrayOf<Any>(rule.varName, rule.jsonPath, rule.required))
         }
     }
 
@@ -1532,6 +1887,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         runSingleBtn.isEnabled = !running && getActiveEditableStep() != null
         stopBtn.isEnabled = running
         scenarioComboBox.isEnabled = !running
+        renameScenarioBtn.isEnabled = !running
     }
 
     // --- Result Rendering ---
@@ -1573,7 +1929,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         for ((k, v) in result.extractedVariables) {
-            extractedVarsModel.addRow(arrayOf(k, v))
+            extractedVarsModel.addRow(arrayOf<Any>(k, v))
         }
 
         responseBodyArea.text = when {
