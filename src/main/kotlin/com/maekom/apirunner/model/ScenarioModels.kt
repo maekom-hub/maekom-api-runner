@@ -31,6 +31,16 @@ enum class ScenarioStatus {
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+data class QueryParamItem(
+    var enabled: Boolean = true,
+    var key: String = "",
+    var value: String = "",
+    var description: String = ""
+) {
+    fun deepCopy(): QueryParamItem = copy()
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ExtractRule(
     var varName: String = "",
     var jsonPath: String = "",
@@ -47,6 +57,7 @@ data class ApiStep(
     var method: String = "GET",
     var url: String = "/",
     var expectedStatus: String = "2xx",
+    var queryParams: MutableList<QueryParamItem> = mutableListOf(),
     var headers: MutableMap<String, String> = linkedMapOf(),
     var body: String = "",
     var extractRules: MutableList<ExtractRule> = mutableListOf()
@@ -58,6 +69,7 @@ data class ApiStep(
         method = method,
         url = url,
         expectedStatus = expectedStatus,
+        queryParams = queryParams.map { it.deepCopy() }.toMutableList(),
         headers = LinkedHashMap(headers),
         body = body,
         extractRules = extractRules.map { it.deepCopy() }.toMutableList()
@@ -97,6 +109,7 @@ data class ExtractedEndpoint(
     val path: String,
     val baseUrl: String,
     val displayName: String,
+    val queryParams: MutableList<QueryParamItem> = mutableListOf(),
     val headers: MutableMap<String, String> = linkedMapOf(),
     val sampleBody: String = ""
 ) {
@@ -111,6 +124,7 @@ data class ExtractedEndpoint(
             method = method,
             url = path,
             expectedStatus = "2xx",
+            queryParams = queryParams.map { it.deepCopy() }.toMutableList(),
             headers = stepHeaders,
             body = sampleBody,
             extractRules = mutableListOf()

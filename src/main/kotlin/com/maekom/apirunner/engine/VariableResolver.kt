@@ -1,5 +1,9 @@
 package com.maekom.apirunner.engine
 
+import com.maekom.apirunner.model.QueryParamItem
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+
 /**
  * Resolves {{variableName}} placeholders with strict priority:
  * 1. runtimeContext (variables extracted during scenario execution)
@@ -87,6 +91,74 @@ object VariableResolver {
             "/$trimmedStep"
         }
         return cleanBase + normalizedStep
+    }
+
+    /**
+     * Appends only enabled QueryParamItems onto the URL while merging cleanly with
+     * any inline query parameters already present in the URL.
+     * If a key exists in both inline URL and enabled Params, the Params entry overrides the inline one.
+     */
+    fun appendQueryParams(
+        url: String,
+        queryParams: List<QueryParamItem>,
+        runtimeContext: Map<String, String> = emptyMap(),
+        secrets: Map<String, String> = emptyMap(),
+        globalVariables: Map<String, String> = emptyMap()
+    ): String {
+        val resolvedParams = queryParams
+            .filter { it.enabled }
+            .mapNotNull { item ->
+                val resolvedKey = resolve(item.key, runtimeContext, secrets, globalVariables).trim()
+                if (resolvedKey.isEmpty()) {
+                    null
+                } else {
+                    val resolvedVal = resolve(item.value, runtimeContext, secrets, globalVariables)
+                    resolvedKey to resolvedVal
+                }
+            }
+
+        if (resolvedParams.isEmpty()) {
+            return url
+        }
+
+        // Preserve optional #fragment
+        val hashIndex = url.indexOf('#')
+        val urlWithoutFragment = if (hashIndex >= 0) url.substring(0, hashIndex) else url
+        val fragment = if (hashIndex >= 0) url.substring(hashIndex) else ""
+
+        val queryIndex = urlWithoutFragment.indexOf('?')
+        val basePart = if (queryIndex >= 0) urlWithoutFragment.substring(0, queryIndex) else urlWithoutFragment
+        val existingQuery = if (queryIndex >= 0) urlWithoutFragment.substring(queryIndex + 1) else ""
+
+        val paramKeys = resolvedParams.map { it.first }.toSet()
+        val finalParts = mutableListOf<String>()
+
+        // Keep existing inline query parameters unless overridden by an enabled Params item
+        if (existingQuery.isNotBlank()) {
+            for (segment in existingQuery.split('&')) {
+                if (segment.isBlank()) continue
+                val eqIdx = segment.indexOf('=')
+                val rawKey = if (eqIdx >= 0) segment.substring(0, eqIdx) else segment
+                val decodedOrRawKey = rawKey.trim()
+                if (decodedOrRawKey !in paramKeys && encodeQueryComponent(decodedOrRawKey) !in paramKeys) {
+                    finalParts.add(segment)
+                }
+            }
+        }
+
+        for ((k, v) in resolvedParams) {
+            finalParts.add("${encodeQueryComponent(k)}=${encodeQueryComponent(v)}")
+        }
+
+        return if (finalParts.isEmpty()) {
+            basePart + fragment
+        } else {
+            "$basePart?${finalParts.joinToString("&")}$fragment"
+        }
+    }
+
+    private fun encodeQueryComponent(value: String): String {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
     }
 
     fun lookup(

@@ -2,6 +2,7 @@ package com.maekom.apirunner.ui
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -28,11 +29,14 @@ import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.maekom.apirunner.engine.ScenarioRunListener
 import com.maekom.apirunner.engine.ScenarioRunner
+import com.maekom.apirunner.i18n.I18nManager
+import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
 import com.maekom.apirunner.model.ExtractRule
 import com.maekom.apirunner.model.ExtractedEndpoint
 import com.maekom.apirunner.model.HttpMethod
+import com.maekom.apirunner.model.QueryParamItem
 import com.maekom.apirunner.model.ScenarioExecutionSummary
 import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepExecutionResult
@@ -63,19 +67,31 @@ import javax.swing.table.DefaultTableModel
 
 /**
  * 3-Pane Split ToolWindow UI for Maekom API Runner:
- * - Top Toolbar: Scenario selector, Save, New, Import/Export, Global Headers/Secrets, BaseURL, Ignore SSL, Run All, Stop
+ * - Top Toolbar: Scenario selector (with dirty check), Save, New, Import/Export, Global Headers/Secrets,
+ *   BaseURL, Ignore SSL, Run All, Stop, and [KO / EN] language toggle switch on the far right
  * - Left Pane: Step list with active checkboxes, status icons, Method+Path, reorder/duplicate/delete/add buttons
- * - Center Pane: Step editor (Method, URL, Expected Status, Single Run, Headers / Body JSON / Extract Rules tabs)
+ * - Center Pane: Step editor (Method, URL, Expected Status, Single Run, Params / Body (JSON) / Headers / Extract Rules tabs)
  * - Right Pane: Result viewer (HTTP Status, Duration ms, Extracted Variables, Formatted Response JSON/Raw Text, Error Logs)
  */
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
+    companion object {
+        private const val TAB_PARAMS = 0
+        private const val TAB_BODY = 1
+        private const val TAB_HEADERS = 2
+        private const val TAB_EXTRACT = 3
+    }
+
     private val storage: ScenarioStorageService = project.service()
     private val scenarioRunner = ScenarioRunner()
     private val jsonFormatter = ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT)
+    private val dirtyCheckMapper = jacksonObjectMapper()
 
     private var currentScenario: ApiScenario = ApiScenario()
+    private var savedScenarioSnapshotJson: String = ""
     private var quickSingleStep: ApiStep? = null
+    private var lastQuickEndpoint: ExtractedEndpoint? = null
+    private var lastDisplayedResult: StepExecutionResult? = null
     private var isQuickSingleMode: Boolean = false
     private var isRunning: Boolean = false
     private var isUpdatingUi: Boolean = false
@@ -85,50 +101,74 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val lastRuntimeContext = linkedMapOf<String, String>()
 
     // --- Top Toolbar Controls ---
+    private val scenarioLabel = JBLabel()
     private val scenarioComboModel = DefaultComboBoxModel<String>()
     private val scenarioComboBox = ComboBox(scenarioComboModel)
-    private val saveBtn = JButton("저장")
-    private val newScenarioBtn = JButton("새 시나리오")
-    private val importExportBtn = JButton("불러오기/내보내기 ▾")
-    private val globalConfigBtn = JButton("공통 헤더/시크릿")
-    private val baseUrlField = JBTextField(20)
-    private val ignoreSslCheckbox = JBCheckBox("SSL 무시")
-    private val runAllBtn = JButton("▶ 전체 시나리오 실행")
-    private val stopBtn = JButton("■ 중지")
+    private val saveBtn = JButton()
+    private val newScenarioBtn = JButton()
+    private val importExportBtn = JButton()
+    private val globalConfigBtn = JButton()
+    private val baseUrlLabel = JBLabel()
+    private val baseUrlField = JBTextField(18)
+    private val ignoreSslCheckbox = JBCheckBox()
+    private val runAllBtn = JButton()
+    private val stopBtn = JButton()
+    private val languageToggleBtn = JButton()
 
     // Quick-Single Mode Banner
     private val quickModeBanner = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-    private val quickModeLabel = JBLabel("🌶️ 임시 단건 실행 모드")
-    private val promoteToScenarioBtn = JButton("➕ 현재 시나리오에 추가")
-    private val exitQuickModeBtn = JButton("시나리오 모드로 복귀")
+    private val quickModeLabel = JBLabel()
+    private val promoteToScenarioBtn = JButton()
+    private val exitQuickModeBtn = JButton()
 
     // --- Left Pane: Step List ---
+    private val stepsHeaderLabel = JBLabel()
     private val stepTableModel = StepListTableModel()
     private val stepTable = JBTable(stepTableModel)
     private val moveUpBtn = JButton("▲")
     private val moveDownBtn = JButton("▼")
-    private val duplicateStepBtn = JButton("복제")
-    private val deleteStepBtn = JButton("삭제")
-    private val addEmptyStepBtn = JButton("+ 빈 스텝")
+    private val duplicateStepBtn = JButton()
+    private val deleteStepBtn = JButton()
+    private val addEmptyStepBtn = JButton()
 
     // --- Center Pane: Step Detail Editor ---
     private val methodComboBox = ComboBox(HttpMethod.entries.map { it.name }.toTypedArray())
     private val urlField = JBTextField()
+    private val expectedStatusLabel = JBLabel()
     private val expectedStatusField = JBTextField("2xx", 6)
-    private val runSingleBtn = JButton("▶ 단건 실행")
+    private val runSingleBtn = JButton()
     private val editorTabs = JBTabbedPane()
 
-    private val headersTableModel = object : DefaultTableModel(arrayOf("Header Key", "Value"), 0) {
+    // Params Tab: [체크박스(전송 여부)] | [Key] | [Value] | [Description]
+    private val paramsTableModel = object : DefaultTableModel(arrayOf("전송", "Key", "Value", "Description"), 0) {
+        override fun getColumnClass(columnIndex: Int): Class<*> =
+            if (columnIndex == 0) java.lang.Boolean::class.java else String::class.java
+
         override fun isCellEditable(row: Int, column: Int): Boolean = true
     }
-    private val headersTable = JBTable(headersTableModel)
+    private val paramsTable = JBTable(paramsTableModel)
+    private val addParamBtn = JButton()
+    private val removeParamBtn = JButton()
+    private val paramsHintLabel = JBLabel()
 
+    // Body Tab
     private val bodyTextArea = JBTextArea().apply {
         font = Font(Font.MONOSPACED, Font.PLAIN, 12)
         lineWrap = false
         tabSize = 2
     }
+    private val formatJsonBtn = JButton()
+    private val bodyHintLabel = JBLabel()
 
+    // Headers Tab
+    private val headersTableModel = object : DefaultTableModel(arrayOf("Header Key", "Value"), 0) {
+        override fun isCellEditable(row: Int, column: Int): Boolean = true
+    }
+    private val headersTable = JBTable(headersTableModel)
+    private val addHeaderBtn = JButton()
+    private val removeHeaderBtn = JButton()
+
+    // Extract Rules Tab
     private val extractRulesTableModel = object : DefaultTableModel(arrayOf("변수명 (varName)", "JsonPath", "필수"), 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
             if (columnIndex == 2) java.lang.Boolean::class.java else String::class.java
@@ -136,12 +176,19 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         override fun isCellEditable(row: Int, column: Int): Boolean = true
     }
     private val extractRulesTable = JBTable(extractRulesTableModel)
+    private val addRuleBtn = JButton()
+    private val removeRuleBtn = JButton()
+    private val extractHintLabel = JBLabel()
 
     // --- Right Pane: Result Viewer ---
-    private val statusBadgeLabel = JBLabel("대기 중")
+    private val resultStatusTitleLabel = JBLabel()
+    private val statusBadgeLabel = JBLabel()
+    private val resultDurationTitleLabel = JBLabel()
     private val durationLabel = JBLabel("0 ms")
     private val scenarioStatusLabel = JBLabel("")
     private val resultTabs = JBTabbedPane()
+    private val extractedHeaderLabel = JBLabel()
+    private val responseHeaderLabel = JBLabel()
 
     private val extractedVarsModel = object : DefaultTableModel(arrayOf("추출 변수명", "값"), 0) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
@@ -165,7 +212,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     init {
         buildLayout()
         wireEvents()
+        applyTranslations()
         initializeScenarios()
+
+        I18nManager.getInstance().addListener(this) {
+            ApplicationManager.getApplication().invokeLater {
+                applyTranslations()
+            }
+        }
     }
 
     private fun buildLayout() {
@@ -174,12 +228,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         northContainer.add(buildQuickModeBanner(), BorderLayout.SOUTH)
         add(northContainer, BorderLayout.NORTH)
 
-        val centerRightSplitter = OnePixelSplitter(false, 0.52f).apply {
+        val centerRightSplitter = OnePixelSplitter(false, 0.54f).apply {
             firstComponent = buildCenterEditorPane()
             secondComponent = buildRightResultPane()
         }
 
-        val mainSplitter = OnePixelSplitter(false, 0.25f).apply {
+        val mainSplitter = OnePixelSplitter(false, 0.24f).apply {
             firstComponent = buildLeftStepListPane()
             secondComponent = centerRightSplitter
         }
@@ -188,31 +242,38 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun buildTopToolbar(): JPanel {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4))
-        toolbar.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
+        val toolbarContainer = JPanel(BorderLayout())
+        toolbarContainer.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
 
-        scenarioComboBox.preferredSize = Dimension(160, 28)
-        baseUrlField.preferredSize = Dimension(190, 28)
-        baseUrlField.toolTipText = "시나리오 전역 Base URL (예: http://localhost:8080)"
-        ignoreSslCheckbox.toolTipText = "로컬 개발용 자가서명(Self-signed) HTTPS 인증서 검증 무시"
+        val leftControls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4))
+        scenarioComboBox.preferredSize = Dimension(150, 28)
+        baseUrlField.preferredSize = Dimension(180, 28)
         stopBtn.isEnabled = false
 
         runAllBtn.foreground = JBColor(Color(0x1B, 0x7F, 0x3A), Color(0x6C, 0xD9, 0x7E))
         stopBtn.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
 
-        toolbar.add(JBLabel("시나리오:"))
-        toolbar.add(scenarioComboBox)
-        toolbar.add(saveBtn)
-        toolbar.add(newScenarioBtn)
-        toolbar.add(importExportBtn)
-        toolbar.add(globalConfigBtn)
-        toolbar.add(JBLabel("BaseURL:"))
-        toolbar.add(baseUrlField)
-        toolbar.add(ignoreSslCheckbox)
-        toolbar.add(runAllBtn)
-        toolbar.add(stopBtn)
+        leftControls.add(scenarioLabel)
+        leftControls.add(scenarioComboBox)
+        leftControls.add(saveBtn)
+        leftControls.add(newScenarioBtn)
+        leftControls.add(importExportBtn)
+        leftControls.add(globalConfigBtn)
+        leftControls.add(baseUrlLabel)
+        leftControls.add(baseUrlField)
+        leftControls.add(ignoreSslCheckbox)
+        leftControls.add(runAllBtn)
+        leftControls.add(stopBtn)
 
-        return toolbar
+        val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 4))
+        languageToggleBtn.font = languageToggleBtn.font.deriveFont(Font.BOLD)
+        languageToggleBtn.margin = JBUI.insets(3, 8)
+        rightControls.add(languageToggleBtn)
+
+        toolbarContainer.add(leftControls, BorderLayout.CENTER)
+        toolbarContainer.add(rightControls, BorderLayout.EAST)
+
+        return toolbarContainer
     }
 
     private fun buildQuickModeBanner(): JPanel {
@@ -230,11 +291,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout())
         panel.border = JBUI.Borders.empty(4)
 
-        val header = JBLabel("실행 스텝 목록").apply {
+        stepsHeaderLabel.apply {
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4, 6, 4)
         }
-        panel.add(header, BorderLayout.NORTH)
+        panel.add(stepsHeaderLabel, BorderLayout.NORTH)
 
         stepTable.apply {
             setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
@@ -247,9 +308,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 preferredWidth = 28
             }
             columnModel.getColumn(1).apply {
-                maxWidth = 32
-                minWidth = 28
-                preferredWidth = 30
+                maxWidth = 44
+                minWidth = 34
+                preferredWidth = 38
                 cellRenderer = StatusIconCellRenderer()
             }
             columnModel.getColumn(2).cellRenderer = MethodPathCellRenderer()
@@ -281,9 +342,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         methodComboBox.preferredSize = Dimension(92, 28)
 
         val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        expectedStatusField.toolTipText = "기대 HTTP 상태코드 (예: 2xx, 200, 200,201, 200..299)"
         expectedStatusField.preferredSize = Dimension(64, 28)
-        rightControls.add(JBLabel("기대 상태:"))
+        rightControls.add(expectedStatusLabel)
         rightControls.add(expectedStatusField)
         rightControls.add(runSingleBtn)
 
@@ -293,98 +353,75 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         panel.add(topBar, BorderLayout.NORTH)
 
-        // Tab 1: Headers
+        // Tab 0: Params ([Checkbox] | [Key] | [Value] | [Description])
+        paramsTable.apply {
+            rowHeight = 24
+            putClientProperty("terminateEditOnFocusLost", true)
+            tableHeader.reorderingAllowed = false
+            columnModel.getColumn(0).apply {
+                maxWidth = 54
+                minWidth = 42
+                preferredWidth = 48
+            }
+            columnModel.getColumn(1).preferredWidth = 140
+            columnModel.getColumn(2).preferredWidth = 160
+            columnModel.getColumn(3).preferredWidth = 220
+        }
+        val paramsPanel = JPanel(BorderLayout(0, 4))
+        paramsPanel.add(JBScrollPane(paramsTable), BorderLayout.CENTER)
+        val paramsBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        paramsHintLabel.foreground = JBColor.GRAY
+        paramsBtnBar.add(addParamBtn)
+        paramsBtnBar.add(removeParamBtn)
+        paramsBtnBar.add(paramsHintLabel)
+        paramsPanel.add(paramsBtnBar, BorderLayout.SOUTH)
+
+        // Tab 1: Body (JSON)
+        val bodyPanel = JPanel(BorderLayout(0, 4))
+        bodyPanel.add(JBScrollPane(bodyTextArea), BorderLayout.CENTER)
+        val bodyBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        bodyHintLabel.foreground = JBColor.GRAY
+        bodyBtnBar.add(formatJsonBtn)
+        bodyBtnBar.add(bodyHintLabel)
+        bodyPanel.add(bodyBtnBar, BorderLayout.SOUTH)
+
+        // Tab 2: Headers
         headersTable.apply {
             rowHeight = 24
             putClientProperty("terminateEditOnFocusLost", true)
+            tableHeader.reorderingAllowed = false
         }
         val headersPanel = JPanel(BorderLayout(0, 4))
         headersPanel.add(JBScrollPane(headersTable), BorderLayout.CENTER)
         val headersBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
-        val addHeaderBtn = JButton("+ 헤더 추가").apply {
-            addActionListener {
-                stopTableEditing(headersTable)
-                headersTableModel.addRow(arrayOf("", ""))
-                syncEditorToCurrentStep()
-            }
-        }
-        val removeHeaderBtn = JButton("- 삭제").apply {
-            addActionListener {
-                stopTableEditing(headersTable)
-                val rows = headersTable.selectedRows
-                for (i in rows.indices.reversed()) {
-                    headersTableModel.removeRow(rows[i])
-                }
-                syncEditorToCurrentStep()
-            }
-        }
         headersBtnBar.add(addHeaderBtn)
         headersBtnBar.add(removeHeaderBtn)
         headersPanel.add(headersBtnBar, BorderLayout.SOUTH)
-
-        // Tab 2: Body (JSON)
-        val bodyPanel = JPanel(BorderLayout(0, 4))
-        bodyPanel.add(JBScrollPane(bodyTextArea), BorderLayout.CENTER)
-        val bodyBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
-        val formatJsonBtn = JButton("JSON 포맷팅").apply {
-            addActionListener {
-                val raw = bodyTextArea.text.trim()
-                if (raw.isNotEmpty()) {
-                    try {
-                        val tree = jsonFormatter.readTree(raw)
-                        bodyTextArea.text = jsonFormatter.writeValueAsString(tree)
-                    } catch (e: Exception) {
-                        Messages.showWarningDialog(project, "유효한 JSON 형식이 아닙니다:\n${e.message}", "JSON 포맷 오류")
-                    }
-                }
-            }
-        }
-        bodyBtnBar.add(formatJsonBtn)
-        bodyBtnBar.add(JBLabel("  💡 {{변수명}} 치환 지원 (컨텍스트 > 시크릿 > 전역 변수)").apply {
-            foreground = JBColor.GRAY
-        })
-        bodyPanel.add(bodyBtnBar, BorderLayout.SOUTH)
 
         // Tab 3: Extract Rules
         extractRulesTable.apply {
             rowHeight = 24
             putClientProperty("terminateEditOnFocusLost", true)
+            tableHeader.reorderingAllowed = false
             columnModel.getColumn(2).apply {
-                maxWidth = 54
-                minWidth = 44
-                preferredWidth = 48
+                maxWidth = 64
+                minWidth = 48
+                preferredWidth = 56
             }
         }
         val extractPanel = JPanel(BorderLayout(0, 4))
         extractPanel.add(JBScrollPane(extractRulesTable), BorderLayout.CENTER)
         val extractBtnBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
-        val addRuleBtn = JButton("+ 규칙 추가").apply {
-            addActionListener {
-                stopTableEditing(extractRulesTable)
-                extractRulesTableModel.addRow(arrayOf("token", "$.data.token", true))
-                syncEditorToCurrentStep()
-            }
-        }
-        val removeRuleBtn = JButton("- 삭제").apply {
-            addActionListener {
-                stopTableEditing(extractRulesTable)
-                val rows = extractRulesTable.selectedRows
-                for (i in rows.indices.reversed()) {
-                    extractRulesTableModel.removeRow(rows[i])
-                }
-                syncEditorToCurrentStep()
-            }
-        }
+        extractHintLabel.foreground = JBColor.GRAY
         extractBtnBar.add(addRuleBtn)
         extractBtnBar.add(removeRuleBtn)
-        extractBtnBar.add(JBLabel("  ⚠️ 필수(체크) 추출 실패 시 즉시 Fail-Fast 중단").apply {
-            foreground = JBColor.GRAY
-        })
+        extractBtnBar.add(extractHintLabel)
         extractPanel.add(extractBtnBar, BorderLayout.SOUTH)
 
-        editorTabs.addTab("Headers", headersPanel)
+        editorTabs.addTab("Params", paramsPanel)
         editorTabs.addTab("Body (JSON)", bodyPanel)
-        editorTabs.addTab("응답 변수 추출 규칙", extractPanel)
+        editorTabs.addTab("Headers", headersPanel)
+        editorTabs.addTab("응답 변수 추출", extractPanel)
 
         panel.add(editorTabs, BorderLayout.CENTER)
         return panel
@@ -400,33 +437,30 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         durationLabel.foreground = JBColor.GRAY
         scenarioStatusLabel.font = scenarioStatusLabel.font.deriveFont(Font.BOLD)
 
-        summaryBar.add(JBLabel("상태:"))
+        summaryBar.add(resultStatusTitleLabel)
         summaryBar.add(statusBadgeLabel)
-        summaryBar.add(JBLabel("| 소요:"))
+        summaryBar.add(resultDurationTitleLabel)
         summaryBar.add(durationLabel)
         summaryBar.add(scenarioStatusLabel)
         panel.add(summaryBar, BorderLayout.NORTH)
 
-        // Tab 1: Response + Extracted Variables vertical split
+        // Tab 0: Response + Extracted Variables vertical split
         extractedVarsTable.rowHeight = 22
+        extractedVarsTable.tableHeader.reorderingAllowed = false
+        extractedHeaderLabel.apply {
+            font = font.deriveFont(Font.BOLD)
+            border = JBUI.Borders.empty(2, 4)
+        }
         val extractedPanel = JPanel(BorderLayout())
-        extractedPanel.add(
-            JBLabel("추출된 변수 목록").apply {
-                font = font.deriveFont(Font.BOLD)
-                border = JBUI.Borders.empty(2, 4)
-            },
-            BorderLayout.NORTH
-        )
+        extractedPanel.add(extractedHeaderLabel, BorderLayout.NORTH)
         extractedPanel.add(JBScrollPane(extractedVarsTable), BorderLayout.CENTER)
 
+        responseHeaderLabel.apply {
+            font = font.deriveFont(Font.BOLD)
+            border = JBUI.Borders.empty(2, 4)
+        }
         val responsePanel = JPanel(BorderLayout())
-        responsePanel.add(
-            JBLabel("응답 본문 (JSON / Raw Text)").apply {
-                font = font.deriveFont(Font.BOLD)
-                border = JBUI.Borders.empty(2, 4)
-            },
-            BorderLayout.NORTH
-        )
+        responsePanel.add(responseHeaderLabel, BorderLayout.NORTH)
         responsePanel.add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
 
         val resultSplitter = OnePixelSplitter(true, 0.26f).apply {
@@ -434,7 +468,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             secondComponent = responsePanel
         }
 
-        // Tab 2: Detailed Request/Response & Failure Log
+        // Tab 1: Detailed Request/Response & Failure Log
         val logScroll = JBScrollPane(detailLogArea)
 
         resultTabs.addTab("응답 / 추출 변수", resultSplitter)
@@ -445,13 +479,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun wireEvents() {
-        // Scenario ComboBox change
+        // Language toggle switch [KO / EN]
+        languageToggleBtn.addActionListener {
+            I18nManager.getInstance().toggleLanguage()
+        }
+
+        // Scenario ComboBox change with Dirty Check
         scenarioComboBox.addActionListener {
             if (isUpdatingUi) return@addActionListener
             val selectedName = scenarioComboBox.selectedItem as? String ?: return@addActionListener
-            if (selectedName != currentScenario.name || isQuickSingleMode) {
-                loadScenarioByName(selectedName)
-            }
+            if (selectedName == currentScenario.name && !isQuickSingleMode) return@addActionListener
+            handleScenarioSwitchRequest(selectedName)
         }
 
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
@@ -462,12 +500,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         baseUrlField.document.addDocumentListener(simpleDocListener {
             if (!isUpdatingUi) {
                 currentScenario.baseUrl = baseUrlField.text.trim()
+                updateDirtyIndicator()
             }
         })
 
         ignoreSslCheckbox.addActionListener {
             if (!isUpdatingUi) {
                 currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+                updateDirtyIndicator()
             }
         }
 
@@ -478,10 +518,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         // Quick single-run banner buttons
         promoteToScenarioBtn.addActionListener {
             val quick = quickSingleStep ?: return@addActionListener
+            stopAllTableEdits()
             syncEditorToCurrentStep()
             val copy = quick.deepCopy()
             isQuickSingleMode = false
             quickSingleStep = null
+            lastQuickEndpoint = null
             quickModeBanner.isVisible = false
             currentScenario.steps.add(copy)
             stepTableModel.fireTableDataChanged()
@@ -491,6 +533,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         exitQuickModeBtn.addActionListener {
             isQuickSingleMode = false
             quickSingleStep = null
+            lastQuickEndpoint = null
             quickModeBanner.isVisible = false
             refreshEditorFromSelection()
         }
@@ -516,12 +559,88 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         deleteStepBtn.addActionListener { deleteSelectedStep() }
         addEmptyStepBtn.addActionListener { addEmptyStep() }
 
+        // Params Tab buttons
+        addParamBtn.addActionListener {
+            stopTableEditing(paramsTable)
+            paramsTableModel.addRow(arrayOf(true, "", "", ""))
+            val row = paramsTableModel.rowCount - 1
+            paramsTable.setRowSelectionInterval(row, row)
+            paramsTable.editCellAt(row, 1)
+            syncEditorToCurrentStep()
+        }
+        removeParamBtn.addActionListener {
+            stopTableEditing(paramsTable)
+            val rows = paramsTable.selectedRows
+            for (i in rows.indices.reversed()) {
+                paramsTableModel.removeRow(rows[i])
+            }
+            syncEditorToCurrentStep()
+        }
+
+        // Body Tab button
+        formatJsonBtn.addActionListener {
+            val raw = bodyTextArea.text.trim()
+            if (raw.isNotEmpty()) {
+                try {
+                    val tree = jsonFormatter.readTree(raw)
+                    bodyTextArea.text = jsonFormatter.writeValueAsString(tree)
+                } catch (e: Exception) {
+                    Messages.showWarningDialog(
+                        project,
+                        I18nManager.t("body.invalidJson.msg", e.message ?: ""),
+                        I18nManager.t("body.invalidJson.title")
+                    )
+                }
+            }
+        }
+
+        // Headers Tab buttons
+        addHeaderBtn.addActionListener {
+            stopTableEditing(headersTable)
+            headersTableModel.addRow(arrayOf("", ""))
+            val row = headersTableModel.rowCount - 1
+            headersTable.setRowSelectionInterval(row, row)
+            headersTable.editCellAt(row, 0)
+            syncEditorToCurrentStep()
+        }
+        removeHeaderBtn.addActionListener {
+            stopTableEditing(headersTable)
+            val rows = headersTable.selectedRows
+            for (i in rows.indices.reversed()) {
+                headersTableModel.removeRow(rows[i])
+            }
+            syncEditorToCurrentStep()
+        }
+
+        // Extract Rules Tab buttons
+        addRuleBtn.addActionListener {
+            stopTableEditing(extractRulesTable)
+            extractRulesTableModel.addRow(arrayOf("token", "$.data.token", true))
+            val row = extractRulesTableModel.rowCount - 1
+            extractRulesTable.setRowSelectionInterval(row, row)
+            extractRulesTable.editCellAt(row, 0)
+            syncEditorToCurrentStep()
+        }
+        removeRuleBtn.addActionListener {
+            stopTableEditing(extractRulesTable)
+            val rows = extractRulesTable.selectedRows
+            for (i in rows.indices.reversed()) {
+                extractRulesTableModel.removeRow(rows[i])
+            }
+            syncEditorToCurrentStep()
+        }
+
         // Center Pane auto-sync to step model
         methodComboBox.addActionListener { if (!isUpdatingUi) syncEditorToCurrentStep() }
         urlField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         expectedStatusField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         bodyTextArea.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
 
+        paramsTableModel.addTableModelListener { e ->
+            if (!isUpdatingUi && e.type != TableModelEvent.HEADER_ROW) {
+                syncEditorToCurrentStep()
+            }
+        }
         headersTableModel.addTableModelListener { e ->
             if (!isUpdatingUi && e.type != TableModelEvent.HEADER_ROW) {
                 syncEditorToCurrentStep()
@@ -530,6 +649,200 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         extractRulesTableModel.addTableModelListener { e ->
             if (!isUpdatingUi && e.type != TableModelEvent.HEADER_ROW) {
                 syncEditorToCurrentStep()
+            }
+        }
+    }
+
+    // --- KO / EN Instant UI Translation ---
+
+    fun applyTranslations() {
+        val lang = I18nManager.getInstance().language
+
+        // Top toolbar
+        scenarioLabel.text = I18nManager.t("toolbar.scenario")
+        saveBtn.text = I18nManager.t("toolbar.save")
+        newScenarioBtn.text = I18nManager.t("toolbar.newScenario")
+        importExportBtn.text = I18nManager.t("toolbar.importExport")
+        globalConfigBtn.text = I18nManager.t("toolbar.globalConfig")
+        baseUrlLabel.text = I18nManager.t("toolbar.baseUrl")
+        baseUrlField.toolTipText = I18nManager.t("toolbar.baseUrl.tooltip")
+        ignoreSslCheckbox.text = I18nManager.t("toolbar.ignoreSsl")
+        ignoreSslCheckbox.toolTipText = I18nManager.t("toolbar.ignoreSsl.tooltip")
+        runAllBtn.text = I18nManager.t("toolbar.runAll")
+        stopBtn.text = I18nManager.t("toolbar.stop")
+        languageToggleBtn.text = if (lang == PluginLanguage.KO) "🌐 [KO] / EN" else "🌐 KO / [EN]"
+        languageToggleBtn.toolTipText = I18nManager.t("toolbar.lang.tooltip")
+
+        // Quick banner
+        val quickEndpoint = lastQuickEndpoint
+        quickModeLabel.text = if (quickEndpoint != null) {
+            I18nManager.t("quick.banner.detail", quickEndpoint.displayName, quickEndpoint.method, quickEndpoint.path)
+        } else {
+            I18nManager.t("quick.banner.default")
+        }
+        promoteToScenarioBtn.text = I18nManager.t("quick.promote")
+        exitQuickModeBtn.text = I18nManager.t("quick.exit")
+
+        // Left pane
+        stepsHeaderLabel.text = I18nManager.t("steps.header")
+        updateTableHeaders(
+            stepTable,
+            I18nManager.t("steps.col.enabled"),
+            I18nManager.t("steps.col.status"),
+            I18nManager.t("steps.col.endpoint")
+        )
+        duplicateStepBtn.text = I18nManager.t("steps.duplicate")
+        deleteStepBtn.text = I18nManager.t("steps.delete")
+        addEmptyStepBtn.text = I18nManager.t("steps.addEmpty")
+
+        // Center pane
+        expectedStatusLabel.text = I18nManager.t("editor.expectedStatus")
+        expectedStatusField.toolTipText = I18nManager.t("editor.expectedStatus.tooltip")
+        runSingleBtn.text = I18nManager.t("editor.runSingle")
+
+        editorTabs.setTitleAt(TAB_PARAMS, I18nManager.t("editor.tab.params"))
+        editorTabs.setTitleAt(TAB_BODY, I18nManager.t("editor.tab.body"))
+        editorTabs.setTitleAt(TAB_HEADERS, I18nManager.t("editor.tab.headers"))
+        editorTabs.setTitleAt(TAB_EXTRACT, I18nManager.t("editor.tab.extract"))
+
+        updateTableHeaders(
+            paramsTable,
+            I18nManager.t("params.col.enabled"),
+            I18nManager.t("params.col.key"),
+            I18nManager.t("params.col.value"),
+            I18nManager.t("params.col.description")
+        )
+        addParamBtn.text = I18nManager.t("params.add")
+        removeParamBtn.text = I18nManager.t("params.remove")
+        paramsHintLabel.text = I18nManager.t("params.hint")
+
+        formatJsonBtn.text = I18nManager.t("body.formatJson")
+        bodyHintLabel.text = I18nManager.t("body.hint")
+
+        updateTableHeaders(
+            headersTable,
+            I18nManager.t("headers.col.key"),
+            I18nManager.t("headers.col.value")
+        )
+        addHeaderBtn.text = I18nManager.t("headers.add")
+        removeHeaderBtn.text = I18nManager.t("headers.remove")
+
+        updateTableHeaders(
+            extractRulesTable,
+            I18nManager.t("extract.col.varName"),
+            I18nManager.t("extract.col.jsonPath"),
+            I18nManager.t("extract.col.required")
+        )
+        addRuleBtn.text = I18nManager.t("extract.add")
+        removeRuleBtn.text = I18nManager.t("extract.remove")
+        extractHintLabel.text = I18nManager.t("extract.hint")
+
+        // Right pane
+        resultStatusTitleLabel.text = I18nManager.t("result.statusLabel")
+        resultDurationTitleLabel.text = I18nManager.t("result.durationLabel")
+        resultTabs.setTitleAt(0, I18nManager.t("result.tab.response"))
+        resultTabs.setTitleAt(1, I18nManager.t("result.tab.log"))
+        extractedHeaderLabel.text = I18nManager.t("result.extractedHeader")
+        responseHeaderLabel.text = I18nManager.t("result.responseHeader")
+        updateTableHeaders(
+            extractedVarsTable,
+            I18nManager.t("result.extractedCol.name"),
+            I18nManager.t("result.extractedCol.value")
+        )
+
+        if (lastDisplayedResult != null) {
+            displayStepResult(lastDisplayedResult)
+        } else if (!isRunning) {
+            statusBadgeLabel.text = if (isQuickSingleMode) {
+                I18nManager.t("result.quickReady")
+            } else {
+                I18nManager.t("result.idle")
+            }
+        }
+        updateDirtyIndicator()
+        revalidate()
+        repaint()
+    }
+
+    private fun updateTableHeaders(table: JBTable, vararg titles: String) {
+        val columnModel = table.columnModel
+        for (i in titles.indices) {
+            if (i < columnModel.columnCount) {
+                columnModel.getColumn(i).headerValue = titles[i]
+            }
+        }
+        table.tableHeader?.repaint()
+    }
+
+    // --- Dirty Check & Snapshot Management ---
+
+    private fun serializeScenarioForDirtyCheck(scenario: ApiScenario): String {
+        return try {
+            dirtyCheckMapper.writeValueAsString(scenario)
+        } catch (_: Exception) {
+            scenario.toString()
+        }
+    }
+
+    private fun markScenarioClean() {
+        savedScenarioSnapshotJson = serializeScenarioForDirtyCheck(currentScenario)
+    }
+
+    fun isScenarioDirty(): Boolean {
+        if (savedScenarioSnapshotJson.isEmpty()) return false
+        return serializeScenarioForDirtyCheck(currentScenario) != savedScenarioSnapshotJson
+    }
+
+    private fun updateDirtyIndicator() {
+        if (isRunning) return
+        if (isScenarioDirty()) {
+            scenarioStatusLabel.text = I18nManager.t("status.unsaved")
+            scenarioStatusLabel.foreground = JBColor(Color(0xE6, 0x51, 0x00), Color(0xFF, 0xB7, 0x4D))
+        } else if (scenarioStatusLabel.text == I18nManager.t("status.unsaved") ||
+            scenarioStatusLabel.text == "● 미저장 변경사항" ||
+            scenarioStatusLabel.text == "● Unsaved changes"
+        ) {
+            scenarioStatusLabel.text = ""
+        }
+    }
+
+    private fun handleScenarioSwitchRequest(targetScenarioName: String) {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
+        currentScenario.baseUrl = baseUrlField.text.trim()
+        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+
+        if (!isScenarioDirty()) {
+            loadScenarioByName(targetScenarioName)
+            return
+        }
+
+        val choice = Messages.showYesNoCancelDialog(
+            project,
+            I18nManager.t("dialog.dirty.message"),
+            I18nManager.t("dialog.dirty.title"),
+            I18nManager.t("dialog.dirty.save"),
+            I18nManager.t("dialog.dirty.discard"),
+            I18nManager.t("dialog.dirty.cancel"),
+            Messages.getQuestionIcon()
+        )
+
+        when (choice) {
+            Messages.YES -> {
+                saveCurrentScenario(showFeedback = false)
+                loadScenarioByName(targetScenarioName)
+            }
+            Messages.NO -> {
+                loadScenarioByName(targetScenarioName)
+            }
+            else -> {
+                // Cancel switch and restore ComboBox selection back to original scenario
+                isUpdatingUi = true
+                try {
+                    scenarioComboBox.selectedItem = currentScenario.name
+                } finally {
+                    isUpdatingUi = false
+                }
             }
         }
     }
@@ -570,6 +883,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
+        markScenarioClean()
+        scenarioStatusLabel.text = ""
     }
 
     // --- Public API invoked by Gutter Marker via ScenarioService ---
@@ -577,6 +892,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     fun loadQuickSingleRun(endpoint: ExtractedEndpoint) {
         val step = endpoint.toApiStep()
         quickSingleStep = step
+        lastQuickEndpoint = endpoint
         isQuickSingleMode = true
 
         isUpdatingUi = true
@@ -585,15 +901,22 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 currentScenario.baseUrl = endpoint.baseUrl
                 baseUrlField.text = endpoint.baseUrl
             }
-            quickModeLabel.text = "🌶️ 임시 단건 실행 모드: ${endpoint.displayName} (${endpoint.method} ${endpoint.path})"
+            quickModeLabel.text = I18nManager.t(
+                "quick.banner.detail",
+                endpoint.displayName,
+                endpoint.method,
+                endpoint.path
+            )
             quickModeBanner.isVisible = true
+            setEditorEnabled(true)
             populateEditorFields(step)
+            selectPreferredEditorTab(step)
         } finally {
             isUpdatingUi = false
         }
 
         displayStepResult(null)
-        statusBadgeLabel.text = "단건 준비 완료"
+        statusBadgeLabel.text = I18nManager.t("result.quickReady")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
         scenarioStatusLabel.text = ""
     }
@@ -601,6 +924,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     fun addStepFromEndpoint(endpoint: ExtractedEndpoint) {
         isQuickSingleMode = false
         quickSingleStep = null
+        lastQuickEndpoint = null
         quickModeBanner.isVisible = false
 
         val step = endpoint.toApiStep()
@@ -623,11 +947,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun loadScenarioByName(name: String) {
         val loaded = storage.loadScenario(name)
         if (loaded == null) {
-            Messages.showErrorDialog(project, "시나리오 '$name'을(를) 불러오지 못했습니다.", "불러오기 실패")
+            Messages.showErrorDialog(
+                project,
+                I18nManager.t("dialog.loadFail.msg", name),
+                I18nManager.t("dialog.loadFail.title")
+            )
             return
         }
         isQuickSingleMode = false
         quickSingleStep = null
+        lastQuickEndpoint = null
         quickModeBanner.isVisible = false
 
         currentScenario = loaded
@@ -651,6 +980,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             refreshEditorFromSelection()
         }
         displayStepResult(null)
+        markScenarioClean()
+        scenarioStatusLabel.text = ""
     }
 
     private fun saveCurrentScenario(showFeedback: Boolean) {
@@ -660,9 +991,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val savedFile = storage.saveScenario(currentScenario)
+        markScenarioClean()
         refreshScenarioComboBox(currentScenario.name)
         if (showFeedback) {
-            scenarioStatusLabel.text = "💾 저장됨 (${savedFile.name})"
+            scenarioStatusLabel.text = I18nManager.t("status.saved", savedFile.name)
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
         }
     }
@@ -670,8 +1002,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun createNewScenarioDialog() {
         val inputName = Messages.showInputDialog(
             project,
-            "새 시나리오 이름을 입력하세요 (파일명으로 저장됩니다):",
-            "새 시나리오 생성",
+            I18nManager.t("dialog.newScenario.msg"),
+            I18nManager.t("dialog.newScenario.title"),
             Messages.getQuestionIcon()
         )?.trim()
         if (inputName.isNullOrBlank()) return
@@ -686,20 +1018,20 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun showImportExportMenu() {
-        val actions = listOf(
-            "📥 외부 JSON 불러오기 (Import)",
-            "📤 JSON 파일로 내보내기 (Export)",
-            "📋 현재 시나리오 복제",
-            "🗑️ 현재 시나리오 삭제"
-        )
-        val popupStep = object : BaseListPopupStep<String>("시나리오 관리", actions) {
+        val importLabel = I18nManager.t("menu.import")
+        val exportLabel = I18nManager.t("menu.export")
+        val duplicateLabel = I18nManager.t("menu.duplicate")
+        val deleteLabel = I18nManager.t("menu.delete")
+        val actions = listOf(importLabel, exportLabel, duplicateLabel, deleteLabel)
+
+        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.scenarioManage"), actions) {
             override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
                 return doFinalStep {
                     when (selectedValue) {
-                        actions[0] -> importExternalScenario()
-                        actions[1] -> exportCurrentScenario()
-                        actions[2] -> duplicateCurrentScenario()
-                        actions[3] -> deleteCurrentScenario()
+                        importLabel -> importExternalScenario()
+                        exportLabel -> exportCurrentScenario()
+                        duplicateLabel -> duplicateCurrentScenario()
+                        deleteLabel -> deleteCurrentScenario()
                     }
                 }
             }
@@ -711,30 +1043,50 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     private fun importExternalScenario() {
         val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("json").apply {
-            title = "시나리오 JSON 파일 선택"
+            title = I18nManager.t("dialog.import.title")
         }
         val chosen = FileChooser.chooseFile(descriptor, project, null) ?: return
         try {
             val imported = storage.importScenario(File(chosen.path))
             refreshScenarioComboBox(imported.name)
             loadScenarioByName(imported.name)
-            Messages.showInfoMessage(project, "시나리오 '${imported.name}'을(를) 불러왔습니다.", "불러오기 완료")
+            Messages.showInfoMessage(
+                project,
+                I18nManager.t("dialog.import.okMsg", imported.name),
+                I18nManager.t("dialog.import.okTitle")
+            )
         } catch (e: Exception) {
-            Messages.showErrorDialog(project, "JSON 불러오기 실패:\n${e.message}", "오류")
+            Messages.showErrorDialog(
+                project,
+                I18nManager.t("dialog.import.errMsg", e.message ?: ""),
+                I18nManager.t("dialog.error.title")
+            )
         }
     }
 
     private fun exportCurrentScenario() {
         stopAllTableEdits()
         syncEditorToCurrentStep()
-        val saverDescriptor = FileSaverDescriptor("시나리오 JSON 내보내기", "저장할 JSON 파일 경로를 선택하세요", "json")
+        val saverDescriptor = FileSaverDescriptor(
+            I18nManager.t("dialog.export.title"),
+            I18nManager.t("dialog.export.desc"),
+            "json"
+        )
         val saveDialog = FileChooserFactory.getInstance().createSaveFileDialog(saverDescriptor, project)
         val wrapper = saveDialog.save("${currentScenario.name}.json") ?: return
         try {
             storage.exportScenario(currentScenario, wrapper.file)
-            Messages.showInfoMessage(project, "시나리오를 내보냈습니다:\n${wrapper.file.absolutePath}", "내보내기 완료")
+            Messages.showInfoMessage(
+                project,
+                I18nManager.t("dialog.export.okMsg", wrapper.file.absolutePath),
+                I18nManager.t("dialog.export.okTitle")
+            )
         } catch (e: Exception) {
-            Messages.showErrorDialog(project, "내보내기 실패:\n${e.message}", "오류")
+            Messages.showErrorDialog(
+                project,
+                I18nManager.t("dialog.export.errMsg", e.message ?: ""),
+                I18nManager.t("dialog.error.title")
+            )
         }
     }
 
@@ -742,8 +1094,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         saveCurrentScenario(showFeedback = false)
         val newName = Messages.showInputDialog(
             project,
-            "복제할 새 시나리오 이름을 입력하세요:",
-            "시나리오 복제",
+            I18nManager.t("dialog.duplicate.msg"),
+            I18nManager.t("dialog.duplicate.title"),
             Messages.getQuestionIcon(),
             "${currentScenario.name}_copy",
             null
@@ -761,8 +1113,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val name = currentScenario.name
         val confirm = Messages.showYesNoDialog(
             project,
-            "시나리오 '$name'을(를) 정말 삭제하시겠습니까?",
-            "시나리오 삭제",
+            I18nManager.t("dialog.delete.msg", name),
+            I18nManager.t("dialog.delete.title"),
             Messages.getWarningIcon()
         )
         if (confirm != Messages.YES) return
@@ -784,7 +1136,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             currentScenario.globalVariables = dialog.getGlobalVariables()
             storage.saveSecrets(dialog.getSecrets())
             saveCurrentScenario(showFeedback = false)
-            scenarioStatusLabel.text = "🔒 공통 설정 및 시크릿 저장됨"
+            scenarioStatusLabel.text = I18nManager.t("status.globalSaved")
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
         }
     }
@@ -820,6 +1172,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stepStatuses[newStep.id] = StepStatus.PENDING
         stepTableModel.fireTableDataChanged()
         selectStepRow(currentScenario.steps.lastIndex)
+        updateDirtyIndicator()
     }
 
     private fun duplicateSelectedStep() {
@@ -833,6 +1186,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stepStatuses[copy.id] = StepStatus.PENDING
         stepTableModel.fireTableDataChanged()
         selectStepRow(idx + 1)
+        updateDirtyIndicator()
     }
 
     private fun deleteSelectedStep() {
@@ -848,6 +1202,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             refreshEditorFromSelection()
             displayStepResult(null)
         }
+        updateDirtyIndicator()
     }
 
     private fun moveSelectedStep(delta: Int) {
@@ -860,6 +1215,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.steps.add(target, step)
         stepTableModel.fireTableDataChanged()
         selectStepRow(target)
+        updateDirtyIndicator()
     }
 
     private fun selectStepRow(rowIndex: Int) {
@@ -887,6 +1243,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 methodComboBox.selectedItem = "GET"
                 urlField.text = ""
                 expectedStatusField.text = "2xx"
+                paramsTableModel.rowCount = 0
                 headersTableModel.rowCount = 0
                 bodyTextArea.text = ""
                 extractRulesTableModel.rowCount = 0
@@ -894,9 +1251,21 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             } else {
                 setEditorEnabled(true)
                 populateEditorFields(step)
+                selectPreferredEditorTab(step)
             }
         } finally {
             isUpdatingUi = false
+        }
+    }
+
+    private fun selectPreferredEditorTab(step: ApiStep) {
+        when {
+            step.method.equals("GET", ignoreCase = true) || step.queryParams.isNotEmpty() -> {
+                editorTabs.selectedIndex = TAB_PARAMS
+            }
+            step.body.isNotBlank() -> {
+                editorTabs.selectedIndex = TAB_BODY
+            }
         }
     }
 
@@ -905,13 +1274,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         urlField.text = step.url
         expectedStatusField.text = step.expectedStatus.ifBlank { "2xx" }
 
-        headersTableModel.rowCount = 0
-        for ((k, v) in step.headers) {
-            headersTableModel.addRow(arrayOf(k, v))
+        paramsTableModel.rowCount = 0
+        for (param in step.queryParams) {
+            paramsTableModel.addRow(arrayOf(param.enabled, param.key, param.value, param.description))
         }
 
         bodyTextArea.text = step.body
         bodyTextArea.caretPosition = 0
+
+        headersTableModel.rowCount = 0
+        for ((k, v) in step.headers) {
+            headersTableModel.addRow(arrayOf(k, v))
+        }
 
         extractRulesTableModel.rowCount = 0
         for (rule in step.extractRules) {
@@ -924,9 +1298,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         urlField.isEnabled = enabled
         expectedStatusField.isEnabled = enabled
         runSingleBtn.isEnabled = enabled && !isRunning
+        paramsTable.isEnabled = enabled
+        addParamBtn.isEnabled = enabled
+        removeParamBtn.isEnabled = enabled
         headersTable.isEnabled = enabled
+        addHeaderBtn.isEnabled = enabled
+        removeHeaderBtn.isEnabled = enabled
         bodyTextArea.isEnabled = enabled
+        formatJsonBtn.isEnabled = enabled
         extractRulesTable.isEnabled = enabled
+        addRuleBtn.isEnabled = enabled
+        removeRuleBtn.isEnabled = enabled
     }
 
     private fun syncEditorToCurrentStep() {
@@ -935,6 +1317,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         step.url = urlField.text
         step.expectedStatus = expectedStatusField.text.trim().ifEmpty { "2xx" }
         step.body = bodyTextArea.text
+
+        val params = mutableListOf<QueryParamItem>()
+        for (i in 0 until paramsTableModel.rowCount) {
+            val enabled = (paramsTableModel.getValueAt(i, 0) as? Boolean) ?: true
+            val key = (paramsTableModel.getValueAt(i, 1)?.toString() ?: "").trim()
+            val value = paramsTableModel.getValueAt(i, 2)?.toString() ?: ""
+            val desc = paramsTableModel.getValueAt(i, 3)?.toString() ?: ""
+            if (key.isNotEmpty() || value.isNotEmpty() || desc.isNotEmpty()) {
+                params.add(QueryParamItem(enabled = enabled, key = key, value = value, description = desc))
+            }
+        }
+        step.queryParams = params
 
         val headers = linkedMapOf<String, String>()
         for (i in 0 until headersTableModel.rowCount) {
@@ -960,11 +1354,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             if (selectedRow in currentScenario.steps.indices) {
                 stepTableModel.fireTableRowsUpdated(selectedRow, selectedRow)
             }
+            updateDirtyIndicator()
         }
     }
 
     private fun stopAllTableEdits() {
         stopTableEditing(stepTable)
+        stopTableEditing(paramsTable)
         stopTableEditing(headersTable)
         stopTableEditing(extractRulesTable)
     }
@@ -983,7 +1379,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         syncEditorToCurrentStep()
 
         if (currentScenario.steps.isEmpty()) {
-            Messages.showInfoMessage(project, "실행할 스텝이 없습니다. 컨트롤러의 고추 아이콘 또는 [+ 빈 스텝]으로 추가하세요.", "Maekom API Runner")
+            Messages.showInfoMessage(project, I18nManager.t("dialog.noSteps.msg"), "Maekom API Runner")
             return
         }
 
@@ -1007,7 +1403,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stepTableModel.fireTableDataChanged()
 
         setRunningState(true)
-        scenarioStatusLabel.text = "🔄 시나리오 실행 중..."
+        scenarioStatusLabel.text = I18nManager.t("status.scenarioRunning")
         scenarioStatusLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -1020,7 +1416,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                             stepStatuses[step.id] = StepStatus.RUNNING
                             stepTableModel.fireTableDataChanged()
                             selectStepRow(stepIndex)
-                            statusBadgeLabel.text = "실행 중..."
+                            statusBadgeLabel.text = I18nManager.t("result.running")
                             statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
                         }
                     }
@@ -1048,11 +1444,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
                             when (summary.scenarioStatus) {
                                 ScenarioStatus.COMPLETED -> {
-                                    scenarioStatusLabel.text = "✅ 완료 (${summary.totalDurationMs} ms)"
+                                    scenarioStatusLabel.text = I18nManager.t("status.scenarioCompleted", summary.totalDurationMs)
                                     scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
                                 }
                                 ScenarioStatus.ABORTED -> {
-                                    scenarioStatusLabel.text = "⛔ ABORTED (${summary.totalDurationMs} ms)"
+                                    scenarioStatusLabel.text = I18nManager.t("status.scenarioAborted", summary.totalDurationMs)
                                     scenarioStatusLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
                                     val failedResult = summary.stepResults.firstOrNull { it.status == StepStatus.FAILED }
                                     if (failedResult != null) {
@@ -1093,7 +1489,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             stepStatuses[activeStep.id] = StepStatus.RUNNING
             stepTableModel.fireTableDataChanged()
         }
-        statusBadgeLabel.text = "단건 실행 중..."
+        statusBadgeLabel.text = I18nManager.t("result.singleRunning")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -1126,7 +1522,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun stopExecution() {
         if (!isRunning) return
         stopBtn.isEnabled = false
-        scenarioStatusLabel.text = "⏹ 중단 요청 중..."
+        scenarioStatusLabel.text = I18nManager.t("status.stopping")
         scenarioRunner.stop()
     }
 
@@ -1141,10 +1537,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     // --- Result Rendering ---
 
     private fun displayStepResult(result: StepExecutionResult?) {
+        lastDisplayedResult = result
         extractedVarsModel.rowCount = 0
 
         if (result == null) {
-            statusBadgeLabel.text = "대기 중"
+            statusBadgeLabel.text = I18nManager.t("result.idle")
             statusBadgeLabel.foreground = JBColor.GRAY
             durationLabel.text = "0 ms"
             responseBodyArea.text = ""
@@ -1165,8 +1562,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             statusBadgeLabel.text = when (result.status) {
                 StepStatus.SKIPPED -> "SKIPPED"
                 StepStatus.FAILED -> "FAILED (${resp?.statusMessage ?: "ERROR"})"
-                StepStatus.RUNNING -> "RUNNING"
-                else -> "대기 중"
+                StepStatus.RUNNING -> I18nManager.t("result.running")
+                else -> I18nManager.t("result.idle")
             }
             statusBadgeLabel.foreground = when (result.status) {
                 StepStatus.FAILED -> JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
@@ -1182,7 +1579,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         responseBodyArea.text = when {
             resp != null && resp.formattedBody.isNotEmpty() -> resp.formattedBody
             resp != null && resp.rawBody.isNotEmpty() -> resp.rawBody
-            result.failureReason != null -> "[오류] ${result.failureReason}"
+            result.failureReason != null -> "[ERROR] ${result.failureReason}"
             else -> ""
         }
         responseBodyArea.caretPosition = 0
@@ -1192,20 +1589,20 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun buildDetailLog(result: StepExecutionResult): String = buildString {
-        appendLine("==================== 실행 요약 ====================")
-        appendLine("스텝 상태 : ${result.status}")
+        appendLine(I18nManager.t("log.summaryHeader"))
+        appendLine(I18nManager.t("log.stepStatus", result.status))
         if (result.failureReason != null) {
-            appendLine("실패 원인 : ${result.failureReason}")
+            appendLine(I18nManager.t("log.failReason", result.failureReason))
         }
         if (result.extractionWarnings.isNotEmpty()) {
-            appendLine("추출 경고 :")
+            appendLine(I18nManager.t("log.warnings"))
             result.extractionWarnings.forEach { appendLine("  - $it") }
         }
         appendLine()
 
         val req = result.requestSnapshot
         if (req != null) {
-            appendLine("==================== 요청 전문 ====================")
+            appendLine(I18nManager.t("log.requestHeader"))
             appendLine("${req.method} ${req.url}")
             if (req.headers.isNotEmpty()) {
                 appendLine("-- Request Headers --")
@@ -1220,7 +1617,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         val resp = result.response
         if (resp != null) {
-            appendLine("==================== 응답 전문 ====================")
+            appendLine(I18nManager.t("log.responseHeader"))
             appendLine("Status   : ${resp.statusCode ?: "N/A"} ${resp.statusMessage}")
             appendLine("Duration : ${resp.durationMs} ms")
             appendLine("Format   : ${if (resp.isJson) "JSON" else "Raw Text / Non-JSON"}")
@@ -1248,11 +1645,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     // --- Inner Table Model & Renderers ---
 
     private inner class StepListTableModel : AbstractTableModel() {
-        private val columns = arrayOf("✓", "상태", "Method & Path")
-
         override fun getRowCount(): Int = currentScenario.steps.size
-        override fun getColumnCount(): Int = columns.size
-        override fun getColumnName(column: Int): String = columns[column]
+        override fun getColumnCount(): Int = 3
+        override fun getColumnName(column: Int): String = when (column) {
+            0 -> I18nManager.t("steps.col.enabled")
+            1 -> I18nManager.t("steps.col.status")
+            else -> I18nManager.t("steps.col.endpoint")
+        }
 
         override fun getColumnClass(columnIndex: Int): Class<*> = when (columnIndex) {
             0 -> java.lang.Boolean::class.java
@@ -1275,6 +1674,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             if (columnIndex == 0 && rowIndex in currentScenario.steps.indices) {
                 currentScenario.steps[rowIndex].enabled = (aValue as? Boolean) ?: true
                 fireTableCellUpdated(rowIndex, columnIndex)
+                updateDirtyIndicator()
             }
         }
     }

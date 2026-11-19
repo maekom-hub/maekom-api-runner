@@ -11,6 +11,7 @@ import com.intellij.psi.PsiArrayInitializerMemberValue
 import com.intellij.psi.PsiArrayType
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiClassType
+import com.intellij.psi.PsiDocCommentOwner
 import com.intellij.psi.PsiEnumConstant
 import com.intellij.psi.PsiExpression
 import com.intellij.psi.PsiField
@@ -24,19 +25,24 @@ import com.intellij.psi.PsiType
 import com.intellij.psi.PsiTypes
 import com.intellij.psi.PsiWildcardType
 import com.intellij.psi.impl.JavaConstantExpressionEvaluator
+import com.intellij.psi.javadoc.PsiDocComment
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.maekom.apirunner.model.ExtractedEndpoint
+import com.maekom.apirunner.model.QueryParamItem
 import java.nio.charset.StandardCharsets
 
 /**
- * Spring Boot PSI analyzer that extracts endpoint HTTP method, path, query string,
- * headers, sample JSON body for @RequestBody DTOs/records, and server.port baseUrl.
+ * Spring Boot PSI analyzer that extracts endpoint HTTP method, path,
+ * structured QueryParamItem list (@RequestParam, @ModelAttribute, unannotated POJO/record DTOs
+ * with Javadoc/@Schema/@Parameter descriptions), headers, sample JSON body for @RequestBody,
+ * and server.port baseUrl.
  * All PSI accesses execute strictly inside IntelliJ ReadAction.
  */
 object PsiEndpointExtractor {
 
     private const val MAX_RECURSION_DEPTH = 4
+    private const val SPRING_DEFAULT_NONE_MARKER = "\n\t\t\n\t\t\n\uE000\uE001\uE002\n\t\t\t\t\n"
 
     private val MAPPING_ANNOTATIONS: Map<String, String> = mapOf(
         "org.springframework.web.bind.annotation.GetMapping" to "GET",
@@ -54,6 +60,16 @@ object PsiEndpointExtractor {
         "DeleteMapping" to "DELETE",
         "PatchMapping" to "PATCH",
         "RequestMapping" to "REQUEST"
+    )
+
+    private val NON_QUERY_PARAM_ANNOTATIONS: Set<String> = setOf(
+        "CookieValue",
+        "RequestAttribute",
+        "SessionAttribute",
+        "MatrixVariable",
+        "AuthenticationPrincipal",
+        "CurrentSecurityContext",
+        "RequestPart"
     )
 
     private val FRAMEWORK_EXCLUDED_SIMPLE_TYPES: Set<String> = setOf(
@@ -92,7 +108,9 @@ object PsiEndpointExtractor {
         "Writer",
         "MultipartFile",
         "Part",
-        "SessionStatus"
+        "SessionStatus",
+        "HttpHeaders",
+        "Cookie"
     )
 
     private val prettyMapper: ObjectMapper = ObjectMapper()
@@ -126,13 +144,15 @@ object PsiEndpointExtractor {
             val methodPath = extractFirstPathValue(mappingAnnotation)
             val combinedPath = normalizePath(classPath, methodPath)
 
-            val queryParams = mutableListOf<String>()
+            val methodParamDocs = extractMethodParamJavadocs(method)
+            val queryParams = mutableListOf<QueryParamItem>()
             val headers = linkedMapOf<String, String>()
             var sampleBody = ""
 
             for (param in method.parameterList.parameters) {
                 if (isFrameworkInternalType(param.type)) continue
 
+                // 1. @RequestBody -> JSON Body sample
                 val requestBodyAnn = findAnnotationByFqnOrShortName(
                     param.annotations,
                     "org.springframework.web.bind.annotation.RequestBody",
@@ -148,16 +168,17 @@ object PsiEndpointExtractor {
                     continue
                 }
 
+                // 2. @PathVariable -> stays as {varName} in URL path
                 val pathVarAnn = findAnnotationByFqnOrShortName(
                     param.annotations,
                     "org.springframework.web.bind.annotation.PathVariable",
                     "PathVariable"
                 )
                 if (pathVarAnn != null) {
-                    // PathVariable stays as {varName} inside path
                     continue
                 }
 
+                // 3. @RequestHeader -> Headers map
                 val requestHeaderAnn = findAnnotationByFqnOrShortName(
                     param.annotations,
                     "org.springframework.web.bind.annotation.RequestHeader",
@@ -174,6 +195,12 @@ object PsiEndpointExtractor {
                     continue
                 }
 
+                // 4. Skip non-query binding annotations (@CookieValue, @RequestAttribute, etc.)
+                if (hasAnyShortAnnotation(param.annotations, NON_QUERY_PARAM_ANNOTATIONS)) {
+                    continue
+                }
+
+                // 5. @RequestParam -> QueryParamItem
                 val requestParamAnn = findAnnotationByFqnOrShortName(
                     param.annotations,
                     "org.springframework.web.bind.annotation.RequestParam",
@@ -185,17 +212,48 @@ object PsiEndpointExtractor {
                         ?: extractStringAttribute(requestParamAnn, "value")?.takeIf { it.isNotBlank() }
                         ?: param.name
                     if (paramName.isNotBlank()) {
-                        queryParams.add("$paramName=")
+                        val defaultVal = extractCleanDefaultValue(requestParamAnn)
+                        val description = extractAnnotationDescription(param.annotations)
+                            .ifBlank { methodParamDocs[param.name].orEmpty() }
+                        queryParams.add(
+                            QueryParamItem(
+                                enabled = true,
+                                key = paramName,
+                                value = defaultVal,
+                                description = description
+                            )
+                        )
                     }
                     continue
                 }
-            }
 
-            val fullPath = if (queryParams.isNotEmpty()) {
-                val sep = if (combinedPath.contains("?")) "&" else "?"
-                "$combinedPath$sep${queryParams.joinToString("&")}"
-            } else {
-                combinedPath
+                // 6. @ModelAttribute OR unannotated parameter (POJO / Java record / scalar query param)
+                val hasModelAttribute = findAnnotationByFqnOrShortName(
+                    param.annotations,
+                    "org.springframework.web.bind.annotation.ModelAttribute",
+                    "ModelAttribute"
+                ) != null
+
+                if (hasModelAttribute || isCustomPojoOrRecord(param.type)) {
+                    extractPojoQueryParams(
+                        type = param.type,
+                        prefix = "",
+                        depth = 0,
+                        visited = emptySet(),
+                        out = queryParams
+                    )
+                } else if (isSimpleScalarType(param.type)) {
+                    val description = extractAnnotationDescription(param.annotations)
+                        .ifBlank { methodParamDocs[param.name].orEmpty() }
+                    queryParams.add(
+                        QueryParamItem(
+                            enabled = true,
+                            key = param.name,
+                            value = "",
+                            description = description
+                        )
+                    )
+                }
             }
 
             val baseUrl = detectServerBaseUrl(project)
@@ -204,12 +262,275 @@ object PsiEndpointExtractor {
 
             ExtractedEndpoint(
                 method = httpMethod,
-                path = fullPath,
+                path = combinedPath,
                 baseUrl = baseUrl,
                 displayName = displayName,
+                queryParams = queryParams,
                 headers = headers,
                 sampleBody = sampleBody
             )
+        }
+    }
+
+    private fun extractPojoQueryParams(
+        type: PsiType,
+        prefix: String,
+        depth: Int,
+        visited: Set<String>,
+        out: MutableList<QueryParamItem>
+    ) {
+        if (depth >= MAX_RECURSION_DEPTH) return
+        val unwrapped = if (type is PsiWildcardType) type.bound ?: return else type
+        if (unwrapped !is PsiClassType) return
+
+        val resolveResult = unwrapped.resolveGenerics()
+        val psiClass = resolveResult.element ?: return
+        val substitutor = resolveResult.substitutor
+        val fqn = psiClass.qualifiedName ?: psiClass.name ?: return
+
+        if (isFrameworkInternalType(unwrapped) || isJdkOrStandardScalarClass(psiClass, fqn)) return
+        if (fqn in visited) return
+
+        val nextVisited = visited + fqn
+
+        if (psiClass.isRecord) {
+            val recordParamDocs = extractClassParamJavadocs(psiClass)
+            for (component in psiClass.recordComponents) {
+                val resolvedType = substitutor.substitute(component.type) ?: component.type
+                val key = if (prefix.isEmpty()) component.name else "$prefix.${component.name}"
+                val description = extractAnnotationDescription(component.annotations)
+                    .ifBlank { recordParamDocs[component.name].orEmpty() }
+                appendQueryParamFromField(
+                    key = key,
+                    fieldType = resolvedType,
+                    description = description,
+                    depth = depth,
+                    visited = nextVisited,
+                    out = out
+                )
+            }
+        } else {
+            val fields = collectDtoFields(psiClass)
+            for (field in fields) {
+                val resolvedType = resolveFieldType(field, substitutor)
+                val key = if (prefix.isEmpty()) field.name else "$prefix.${field.name}"
+                val description = extractAnnotationDescription(field.annotations)
+                    .ifBlank { extractDocCommentSummary(field) }
+                appendQueryParamFromField(
+                    key = key,
+                    fieldType = resolvedType,
+                    description = description,
+                    depth = depth,
+                    visited = nextVisited,
+                    out = out
+                )
+            }
+        }
+    }
+
+    private fun appendQueryParamFromField(
+        key: String,
+        fieldType: PsiType,
+        description: String,
+        depth: Int,
+        visited: Set<String>,
+        out: MutableList<QueryParamItem>
+    ) {
+        if (isFrameworkInternalType(fieldType)) return
+
+        // Array T[]
+        if (fieldType is PsiArrayType) {
+            val componentType = fieldType.componentType
+            if (isCustomPojoOrRecord(componentType) && depth + 1 < MAX_RECURSION_DEPTH) {
+                extractPojoQueryParams(componentType, "$key[0]", depth + 1, visited, out)
+            } else {
+                out.add(QueryParamItem(enabled = true, key = key, value = "", description = description))
+            }
+            return
+        }
+
+        if (fieldType is PsiClassType) {
+            val resolveResult = fieldType.resolveGenerics()
+            val psiClass = resolveResult.element
+            val fqn = psiClass?.qualifiedName
+
+            // Optional<T>
+            if (fqn == "java.util.Optional") {
+                val inner = fieldType.parameters.firstOrNull()
+                if (inner != null) {
+                    appendQueryParamFromField(key, inner, description, depth, visited, out)
+                    return
+                }
+            }
+
+            // List<T> / Set<T> / Collection<T>
+            if (psiClass != null && fqn != null && isCollectionClass(psiClass, fqn)) {
+                val elemType = fieldType.parameters.firstOrNull()
+                if (elemType != null && isCustomPojoOrRecord(elemType) && depth + 1 < MAX_RECURSION_DEPTH) {
+                    extractPojoQueryParams(elemType, "$key[0]", depth + 1, visited, out)
+                } else {
+                    out.add(QueryParamItem(enabled = true, key = key, value = "", description = description))
+                }
+                return
+            }
+
+            // Map<K, V>
+            if (psiClass != null && fqn != null && isMapClass(psiClass, fqn)) {
+                out.add(QueryParamItem(enabled = true, key = key, value = "", description = description))
+                return
+            }
+
+            // Nested custom DTO / Java record
+            if (isCustomPojoOrRecord(fieldType) && depth + 1 < MAX_RECURSION_DEPTH) {
+                val nestedCountBefore = out.size
+                extractPojoQueryParams(fieldType, key, depth + 1, visited, out)
+                if (out.size > nestedCountBefore) {
+                    return
+                }
+            }
+        }
+
+        out.add(QueryParamItem(enabled = true, key = key, value = "", description = description))
+    }
+
+    private fun isCustomPojoOrRecord(type: PsiType): Boolean {
+        val unwrapped = if (type is PsiWildcardType) type.bound ?: return false else type
+        if (unwrapped !is PsiClassType) return false
+        if (isFrameworkInternalType(unwrapped)) return false
+        val psiClass = unwrapped.resolve() ?: return false
+        val fqn = psiClass.qualifiedName ?: psiClass.name ?: return false
+        if (psiClass.isEnum || psiClass.isInterface || psiClass.isAnnotationType) return false
+        if (isJdkOrStandardScalarClass(psiClass, fqn)) return false
+        if (isCollectionClass(psiClass, fqn) || isMapClass(psiClass, fqn)) return false
+        return true
+    }
+
+    private fun isSimpleScalarType(type: PsiType): Boolean {
+        if (type is PsiPrimitiveType) return true
+        if (type is PsiArrayType) return isSimpleScalarType(type.componentType)
+        if (type !is PsiClassType) return false
+        val psiClass = type.resolve() ?: return false
+        val fqn = psiClass.qualifiedName ?: return false
+        if (psiClass.isEnum) return true
+        if (isJdkOrStandardScalarClass(psiClass, fqn)) return true
+        if (isCollectionClass(psiClass, fqn)) {
+            val elem = type.parameters.firstOrNull()
+            return elem == null || isSimpleScalarType(elem)
+        }
+        return false
+    }
+
+    private fun isJdkOrStandardScalarClass(psiClass: PsiClass, fqn: String): Boolean {
+        if (psiClass.isEnum) return true
+        if (fqn.startsWith("java.lang.") || fqn.startsWith("java.time.") || fqn.startsWith("java.math.")) {
+            return true
+        }
+        return fqn in setOf(
+            "java.util.UUID",
+            "java.util.Date",
+            "java.sql.Date",
+            "java.sql.Timestamp",
+            "java.util.Currency",
+            "java.net.URI",
+            "java.net.URL",
+            "java.io.File",
+            "java.nio.file.Path"
+        )
+    }
+
+    private fun extractAnnotationDescription(annotations: Array<PsiAnnotation>): String {
+        // 1. @Schema(description = "...") / title fallback
+        val schemaAnn = findAnnotationByFqnOrShortName(
+            annotations,
+            "io.swagger.v3.oas.annotations.media.Schema",
+            "Schema"
+        )
+        if (schemaAnn != null) {
+            extractStringAttribute(schemaAnn, "description")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            extractStringAttribute(schemaAnn, "title")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        // 2. @Parameter(description = "...")
+        val parameterAnn = findAnnotationByFqnOrShortName(
+            annotations,
+            "io.swagger.v3.oas.annotations.Parameter",
+            "Parameter"
+        )
+        if (parameterAnn != null) {
+            extractStringAttribute(parameterAnn, "description")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        // 3. Swagger v2 fallback: @ApiModelProperty / @ApiParam
+        val apiModelProp = findAnnotationByFqnOrShortName(
+            annotations,
+            "io.swagger.annotations.ApiModelProperty",
+            "ApiModelProperty"
+        )
+        if (apiModelProp != null) {
+            extractStringAttribute(apiModelProp, "value")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        val apiParam = findAnnotationByFqnOrShortName(
+            annotations,
+            "io.swagger.annotations.ApiParam",
+            "ApiParam"
+        )
+        if (apiParam != null) {
+            extractStringAttribute(apiParam, "value")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        return ""
+    }
+
+    private fun extractDocCommentSummary(owner: PsiDocCommentOwner): String {
+        val docComment: PsiDocComment = owner.docComment ?: return ""
+        return cleanJavadocElements(docComment.descriptionElements.joinToString(" ") { it.text })
+    }
+
+    private fun extractMethodParamJavadocs(method: PsiMethod): Map<String, String> {
+        return extractParamTagsFromDocComment(method.docComment)
+    }
+
+    private fun extractClassParamJavadocs(psiClass: PsiClass): Map<String, String> {
+        return extractParamTagsFromDocComment(psiClass.docComment)
+    }
+
+    private fun extractParamTagsFromDocComment(docComment: PsiDocComment?): Map<String, String> {
+        if (docComment == null) return emptyMap()
+        val result = mutableMapOf<String, String>()
+        for (tag in docComment.findTagsByName("param")) {
+            val dataElements = tag.dataElements
+            val paramName = dataElements.firstOrNull()?.text?.trim().orEmpty()
+            if (paramName.isEmpty()) continue
+            val descText = dataElements.drop(1).joinToString(" ") { it.text }
+            val cleaned = cleanJavadocElements(descText)
+            if (cleaned.isNotEmpty()) {
+                result[paramName] = cleaned
+            }
+        }
+        return result
+    }
+
+    internal fun cleanJavadocElements(raw: String): String {
+        return raw
+            .replace(Regex("""<[^>]+>"""), " ")
+            .replace(Regex("""^\s*\*+""", RegexOption.MULTILINE), " ")
+            .replace(Regex("""(?:^|\s)\*+(?=\s|$)"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+
+    private fun extractCleanDefaultValue(requestParamAnn: PsiAnnotation): String {
+        val raw = extractStringAttribute(requestParamAnn, "defaultValue") ?: return ""
+        if (raw == SPRING_DEFAULT_NONE_MARKER || raw.contains("DEFAULT_NONE")) return ""
+        return raw
+    }
+
+    private fun hasAnyShortAnnotation(annotations: Array<PsiAnnotation>, names: Set<String>): Boolean {
+        return annotations.any { ann ->
+            val shortName = ann.nameReferenceElement?.referenceName
+                ?: ann.qualifiedName?.substringAfterLast('.')
+            shortName != null && shortName in names
         }
     }
 
@@ -428,7 +749,10 @@ object PsiEndpointExtractor {
             canonical.startsWith("org.springframework.validation.") ||
             canonical.startsWith("org.springframework.data.domain.") ||
             canonical.startsWith("org.springframework.web.context.request.") ||
-            canonical.startsWith("org.springframework.security.core.")
+            canonical.startsWith("org.springframework.web.multipart.") ||
+            canonical.startsWith("org.springframework.web.servlet.") ||
+            canonical.startsWith("org.springframework.security.core.") ||
+            canonical.startsWith("org.springframework.http.")
         ) {
             return true
         }

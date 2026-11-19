@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.maekom.apirunner.i18n.I18nManager
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -39,9 +40,9 @@ class GlobalConfigDialog(
     private lateinit var secretsTable: JBTable
 
     init {
-        title = "공통 헤더 / 전역 변수 / 로컬 시크릿 관리"
-        setOKButtonText("저장")
-        setCancelButtonText("취소")
+        title = I18nManager.t("global.title")
+        setOKButtonText(I18nManager.t("global.save"))
+        setCancelButtonText(I18nManager.t("global.cancel"))
         init()
     }
 
@@ -54,27 +55,27 @@ class GlobalConfigDialog(
         secretsTable = createEditableTable(secretsModel)
 
         tabbedPane.addTab(
-            "공통 헤더 (Global Headers)",
+            I18nManager.t("global.tab.headers"),
             buildTableTab(
                 table = headersTable,
                 model = headersModel,
-                hint = "모든 스텝에 자동 병합됩니다. 개별 스텝 헤더에 동일 키가 있으면 스텝 헤더가 우선 적용됩니다."
+                hint = I18nManager.t("global.tab.headers.hint")
             )
         )
         tabbedPane.addTab(
-            "전역 변수 (Global Variables)",
+            I18nManager.t("global.tab.vars"),
             buildTableTab(
                 table = variablesTable,
                 model = variablesModel,
-                hint = "시나리오 파일(.maekom/scenarios/*.json)에 저장됩니다. URL/헤더/본문에서 {{변수명}}으로 참조하세요."
+                hint = I18nManager.t("global.tab.vars.hint")
             )
         )
         tabbedPane.addTab(
-            "🔒 로컬 시크릿 (secrets.local.json)",
+            I18nManager.t("global.tab.secrets"),
             buildTableTab(
                 table = secretsTable,
                 model = secretsModel,
-                hint = "비밀번호/토큰 등 민감정보는 .maekom/secrets.local.json에 분리 저장됩니다(.gitignore 적용). 치환 우선순위: 실행 컨텍스트 > 시크릿 > 전역 변수"
+                hint = I18nManager.t("global.tab.secrets.hint")
             )
         )
 
@@ -105,7 +106,7 @@ class GlobalConfigDialog(
         panel.add(JBScrollPane(table), BorderLayout.CENTER)
 
         val btnBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
-        val addBtn = JButton("+ 항목 추가").apply {
+        val addBtn = JButton(I18nManager.t("global.add")).apply {
             addActionListener {
                 stopEditing(table)
                 model.addRow(arrayOf("", ""))
@@ -114,7 +115,7 @@ class GlobalConfigDialog(
                 table.editCellAt(row, 0)
             }
         }
-        val removeBtn = JButton("- 선택 삭제").apply {
+        val removeBtn = JButton(I18nManager.t("global.remove")).apply {
             addActionListener {
                 stopEditing(table)
                 val selected = table.selectedRows
@@ -131,7 +132,10 @@ class GlobalConfigDialog(
     }
 
     private fun createKeyValueModel(initial: Map<String, String>): DefaultTableModel {
-        val model = object : DefaultTableModel(arrayOf("Key (이름)", "Value (값)"), 0) {
+        val model = object : DefaultTableModel(
+            arrayOf(I18nManager.t("global.col.key"), I18nManager.t("global.col.value")),
+            0
+        ) {
             override fun isCellEditable(row: Int, column: Int): Boolean = true
         }
         for ((k, v) in initial) {

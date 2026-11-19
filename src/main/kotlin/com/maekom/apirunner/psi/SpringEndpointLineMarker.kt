@@ -12,6 +12,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiIdentifier
 import com.intellij.psi.PsiMethod
 import com.intellij.ui.awt.RelativePoint
+import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.icons.MaekomIcons
 import com.maekom.apirunner.ui.ScenarioService
 import java.awt.event.MouseEvent
@@ -22,9 +23,9 @@ import java.awt.event.MouseEvent
  */
 class SpringEndpointLineMarker : LineMarkerProvider {
 
-    private enum class GutterAction(val label: String) {
-        SINGLE_RUN("🌶️ 단건 바로 세팅 및 열기"),
-        ADD_TO_SCENARIO("➕ 현재 시나리오에 스텝 추가")
+    private enum class GutterAction(val messageKey: String) {
+        SINGLE_RUN("gutter.singleRun"),
+        ADD_TO_SCENARIO("gutter.addToScenario")
     }
 
     override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? {
@@ -57,7 +58,7 @@ class SpringEndpointLineMarker : LineMarkerProvider {
             "Maekom API Runner (${extracted.method} ${extracted.path})",
             GutterAction.entries
         ) {
-            override fun getTextFor(value: GutterAction): String = value.label
+            override fun getTextFor(value: GutterAction): String = I18nManager.t(value.messageKey)
 
             override fun onChosen(selectedValue: GutterAction, finalChoice: Boolean): PopupStep<*>? {
                 return doFinalStep {

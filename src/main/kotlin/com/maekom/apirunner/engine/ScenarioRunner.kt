@@ -156,7 +156,14 @@ class ScenarioRunner(
             secrets = secrets,
             globalVariables = scenario.globalVariables
         )
-        val fullUrl = VariableResolver.combineUrl(resolvedBaseUrl, resolvedStepUrl)
+        val combinedUrl = VariableResolver.combineUrl(resolvedBaseUrl, resolvedStepUrl)
+        val fullUrl = VariableResolver.appendQueryParams(
+            url = combinedUrl,
+            queryParams = step.queryParams,
+            runtimeContext = runtimeContext,
+            secrets = secrets,
+            globalVariables = scenario.globalVariables
+        )
 
         val mergedHeaders = VariableResolver.mergeHeaders(scenario.globalHeaders, step.headers)
         val resolvedHeaders = VariableResolver.resolveMap(
