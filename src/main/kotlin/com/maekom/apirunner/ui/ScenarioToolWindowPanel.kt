@@ -40,6 +40,7 @@ import com.maekom.apirunner.engine.ScenarioRunner
 import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
+import com.maekom.apirunner.icons.MaekomIcons
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
 import com.maekom.apirunner.model.EnvironmentConfig
@@ -74,6 +75,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.BorderFactory
+import javax.swing.Box
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
 import javax.swing.Icon
@@ -137,7 +139,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val stepResults = mutableMapOf<String, StepExecutionResult>()
     private val lastRuntimeContext = linkedMapOf<String, String>()
 
-    // --- Top Toolbar Controls (v0.2.0 전면 재정렬, WrapLayout 반응형 배치) ---
+    // --- Top Title Header Bar (v0.2.1: 좌측 Maekom API + 업데이트 + 한/영 세그먼트 스위치 | 우측 상태/소요/저장 상태) ---
+    private val topHeaderBarPanel = JPanel(BorderLayout(8, 0))
+    private val appTitleLabel = JBLabel("Maekom API", MaekomIcons.Chili, SwingConstants.LEFT)
+    private val updateCheckBtn = JButton()
+    private val languageSegmentSwitch = LanguageSegmentSwitch(I18nManager.getInstance().language) { chosen ->
+        if (!isUpdatingUi) {
+            I18nManager.getInstance().language = chosen
+        }
+    }
+
+    // --- Top Toolbar Controls (WrapLayout 반응형 배치) ---
     private val topToolbarPanel = JPanel(WrapLayout(FlowLayout.LEFT, 4, 4))
     private val scenarioLabel = JBLabel()
     private val scenarioComboModel = DefaultComboBoxModel<String>()
@@ -149,9 +161,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val curlCopyBtn = JButton()
     private val runAllBtn = JButton()
     private val stopBtn = JButton()
-    private val updateCheckBtn = JButton()
-    private val languageLabel = JBLabel()
-    private val languageComboBox = ComboBox(PluginLanguage.entries.toTypedArray())
 
     // --- Environment Profile Controls (BaseURL 행 앞쪽 배치) ---
     private val envComboModel = DefaultComboBoxModel<String>()
@@ -282,8 +291,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun buildLayout() {
+        // [v0.2.1] 최상단 타이틀 헤더 바 → 글로벌 툴바 → 임시 단건 배너 3단 상단 구조 구성
         val northContainer = JPanel(BorderLayout())
-        northContainer.add(buildTopToolbar(), BorderLayout.NORTH)
+        val topBarsStack = JPanel(BorderLayout()).apply {
+            add(buildTopHeaderBar(), BorderLayout.NORTH)
+            add(buildTopToolbar(), BorderLayout.SOUTH)
+        }
+        northContainer.add(topBarsStack, BorderLayout.NORTH)
         northContainer.add(buildQuickModeBanner(), BorderLayout.SOUTH)
         add(northContainer, BorderLayout.NORTH)
 
@@ -301,11 +315,52 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) {
+                topHeaderBarPanel.revalidate()
                 topToolbarPanel.revalidate()
                 quickModeBanner.revalidate()
                 revalidate()
             }
         })
+    }
+
+    // [v0.2.1] 최상단 타이틀 헤더 바:
+    //   좌측: Maekom API 타이틀 + 여백 + [업데이트 확인] + 여백 + [한국어 | English] 세그먼트 스위치
+    //   우측: 실행 상태(상태: 200 OK) | 소요 시간(0 ms) | 저장 상태(● 미저장 / 저장됨 / 자동 저장됨)
+    private fun buildTopHeaderBar(): JPanel {
+        topHeaderBarPanel.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border()),
+            JBUI.Borders.empty(3, 8, 3, 8)
+        )
+
+        appTitleLabel.font = appTitleLabel.font.deriveFont(Font.BOLD, 13f)
+        updateCheckBtn.margin = JBUI.insets(1, 7)
+
+        val leftGroup = JPanel(FlowLayout(FlowLayout.LEFT, 0, 1)).apply {
+            isOpaque = false
+            add(appTitleLabel)
+            add(Box.createHorizontalStrut(14))
+            add(updateCheckBtn)
+            add(Box.createHorizontalStrut(8))
+            add(languageSegmentSwitch)
+        }
+
+        statusBadgeLabel.font = statusBadgeLabel.font.deriveFont(Font.BOLD)
+        durationLabel.foreground = JBColor.GRAY
+        scenarioStatusLabel.font = scenarioStatusLabel.font.deriveFont(Font.BOLD)
+
+        val rightGroup = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 2)).apply {
+            isOpaque = false
+            add(resultStatusTitleLabel)
+            add(statusBadgeLabel)
+            add(resultDurationTitleLabel)
+            add(durationLabel)
+            add(scenarioStatusLabel)
+        }
+
+        topHeaderBarPanel.add(leftGroup, BorderLayout.WEST)
+        topHeaderBarPanel.add(Box.createHorizontalGlue(), BorderLayout.CENTER)
+        topHeaderBarPanel.add(rightGroup, BorderLayout.EAST)
+        return topHeaderBarPanel
     }
 
     private fun buildTopToolbar(): JPanel {
@@ -329,37 +384,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 return comp
             }
         }
-        // [v0.2.0] 상단 글로벌 툴바 10개 핵심 컨트롤 순서 및 명칭 통일 + 언어선택 ComboBox 적용
-        // 변경 의도: 자주 쓰는 시나리오 저장·관리·공통헤더·변수·cURL·실행·업데이트·언어선택을 직관적 순서로 정렬
+        // [v0.2.1] 업데이트 확인 및 언어 스위치를 최상단 헤더 바로 승격하여 시나리오 실행 툴바를 간결하게 정돈
         stopBtn.isEnabled = false
 
         scenarioManageBtn.margin = JBUI.insets(2, 7)
         variablesHelpBtn.margin = JBUI.insets(2, 7)
         curlCopyBtn.margin = JBUI.insets(2, 7)
-        updateCheckBtn.margin = JBUI.insets(2, 7)
 
         applyRunButtonStyle(runAllBtn)
         applyRunButtonStyle(runSingleBtn)
         stopBtn.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
-
-        languageComboBox.preferredSize = Dimension(112, 28)
-        languageComboBox.renderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(
-                list: JList<*>?,
-                value: Any?,
-                index: Int,
-                isSelected: Boolean,
-                cellHasFocus: Boolean
-            ): Component {
-                val lang = value as? PluginLanguage
-                val text = when (lang) {
-                    PluginLanguage.KO -> I18nManager.t("toolbar.lang.ko")
-                    PluginLanguage.EN -> I18nManager.t("toolbar.lang.en")
-                    null -> ""
-                }
-                return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
-            }
-        }
 
         // 1) 시나리오: [ComboBox]
         topToolbarPanel.add(scenarioLabel)
@@ -378,11 +412,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.add(runAllBtn)
         // 8) [■ 중지]
         topToolbarPanel.add(stopBtn)
-        // 9) [업데이트 확인]
-        topToolbarPanel.add(updateCheckBtn)
-        // 10) 언어선택: [한국어(KO) / 영어(EN)]
-        topToolbarPanel.add(languageLabel)
-        topToolbarPanel.add(languageComboBox)
 
         return topToolbarPanel
     }
@@ -464,35 +493,38 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        // [v0.2.0] 요청 기본 환경 바(1행): [환경 선택 ComboBox] + [⚙ 환경 관리] + BaseURL + [SSL 무시]
-        // 변경 의도: Local/DEV/STG/PRD 환경 프로필을 즉시 전환하고 창 축소 시에도 가독성과 입력 공간을 보장
+        // [v0.2.1] 요청 기본 환경 바(1행) 재배치: [Local ▾] → BaseURL 입력창 → [SSL 무시] → [⚙] 톱니바퀴 아이콘 전용 버튼
+        // 변경 의도: BaseURL 입력 가용 폭을 넓히고 환경 관리 버튼을 우측 끝 컴팩트 아이콘 버튼으로 정돈
         val baseUrlBar = JPanel(GridBagLayout())
         envComboBox.minimumSize = Dimension(94, 28)
         envComboBox.preferredSize = Dimension(114, 28)
-        envManageBtn.margin = JBUI.insets(2, 6)
         baseUrlField.minimumSize = Dimension(120, 28)
         baseUrlField.preferredSize = Dimension(240, 28)
 
+        envManageBtn.apply {
+            text = ""
+            icon = AllIcons.General.GearPlain
+            margin = JBUI.emptyInsets()
+            minimumSize = Dimension(28, 28)
+            preferredSize = Dimension(28, 28)
+            maximumSize = Dimension(28, 28)
+            isFocusable = false
+        }
+
+        // 1) [Local ▾] 환경 선택 셀렉트박스
         baseUrlBar.add(
             envComboBox,
             GridBagConstraints().apply {
                 gridx = 0; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.WEST
-                insets = JBUI.insetsRight(4)
-            }
-        )
-        baseUrlBar.add(
-            envManageBtn,
-            GridBagConstraints().apply {
-                gridx = 1; gridy = 0; weightx = 0.0
-                anchor = GridBagConstraints.WEST
                 insets = JBUI.insetsRight(8)
             }
         )
+        // 2) BaseURL: [입력 필드]
         baseUrlBar.add(
             baseUrlLabel,
             GridBagConstraints().apply {
-                gridx = 2; gridy = 0; weightx = 0.0
+                gridx = 1; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.WEST
                 insets = JBUI.insetsRight(6)
             }
@@ -500,17 +532,27 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         baseUrlBar.add(
             baseUrlField,
             GridBagConstraints().apply {
-                gridx = 3; gridy = 0; weightx = 1.0
+                gridx = 2; gridy = 0; weightx = 1.0
                 fill = GridBagConstraints.HORIZONTAL
                 anchor = GridBagConstraints.WEST
             }
         )
+        // 3) [ ] SSL 무시 체크박스
         baseUrlBar.add(
             ignoreSslCheckbox,
             GridBagConstraints().apply {
-                gridx = 4; gridy = 0; weightx = 0.0
+                gridx = 3; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.EAST
                 insets = JBUI.insetsLeft(8)
+            }
+        )
+        // 4) [⚙] 환경 프로필 관리 아이콘 전용 버튼
+        baseUrlBar.add(
+            envManageBtn,
+            GridBagConstraints().apply {
+                gridx = 4; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsLeft(4)
             }
         )
 
@@ -611,35 +653,24 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun buildRightResultPane(): JPanel {
-        val panel = JPanel(BorderLayout(0, 6))
+        val panel = JPanel(BorderLayout(0, 4))
         panel.border = JBUI.Borders.empty(4)
 
-        val summaryBar = createWrapBar()
-        summaryBar.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
-        statusBadgeLabel.font = statusBadgeLabel.font.deriveFont(Font.BOLD)
-        durationLabel.foreground = JBColor.GRAY
-        scenarioStatusLabel.font = scenarioStatusLabel.font.deriveFont(Font.BOLD)
-
-        summaryBar.add(resultStatusTitleLabel)
-        summaryBar.add(statusBadgeLabel)
-        summaryBar.add(resultDurationTitleLabel)
-        summaryBar.add(durationLabel)
-        summaryBar.add(scenarioStatusLabel)
-        panel.add(summaryBar, BorderLayout.NORTH)
-
-        // [v0.1.5] 우측 결과 패널을 3개 독립 탭(응답 / 추출 변수 / 실행 및 에러 로그)으로 분리
-        // 변경 의도: 응답 본문을 100% 전체 높이로 넓게 표시하고, 추출 변수(개수 배지)와 실시간 실행 로그를 전용 탭으로 분리
+        // [v0.2.1] 상태/소요/저장 표시줄은 최상단 헤더 바 우측으로 이동하고,
+        //          응답 탭 상단의 [응답 변수 추출] 버튼은 BorderLayout.EAST로 맨 우측 정렬 배치
 
         // Tab 0: 응답 (Response — 100% full height)
         responseHeaderLabel.apply {
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4)
         }
-        extractFromResponseBtn.margin = JBUI.insets(2, 7)
+        extractFromResponseBtn.margin = JBUI.insets(2, 8)
 
-        val responseTopBar = createWrapBar()
-        responseTopBar.add(responseHeaderLabel)
-        responseTopBar.add(extractFromResponseBtn)
+        val responseTopBar = JPanel(BorderLayout(8, 0)).apply {
+            border = JBUI.Borders.empty(2, 2, 4, 2)
+            add(responseHeaderLabel, BorderLayout.WEST)
+            add(extractFromResponseBtn, BorderLayout.EAST)
+        }
 
         val responsePanel = JPanel(BorderLayout()).apply {
             add(responseTopBar, BorderLayout.NORTH)
@@ -731,12 +762,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun wireEvents() {
-        languageComboBox.addActionListener {
-            if (isUpdatingUi) return@addActionListener
-            val chosen = languageComboBox.selectedItem as? PluginLanguage ?: return@addActionListener
-            I18nManager.getInstance().language = chosen
-        }
-
         scenarioComboBox.addActionListener {
             if (isUpdatingUi) return@addActionListener
             val selectedName = scenarioComboBox.selectedItem as? String ?: return@addActionListener
@@ -1366,6 +1391,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             updateCheckBtn.font = updateCheckBtn.font.deriveFont(Font.PLAIN)
             updateCheckBtn.foreground = JBColor.foreground()
         }
+        topHeaderBarPanel.revalidate()
         topToolbarPanel.revalidate()
     }
 
@@ -1475,7 +1501,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         curlCopyBtn.text = I18nManager.t("toolbar.curl")
         curlCopyBtn.toolTipText = I18nManager.t("toolbar.curl.tooltip")
         envComboBox.toolTipText = I18nManager.t("env.combo.tooltip")
-        envManageBtn.text = I18nManager.t("env.manageBtn")
+        envManageBtn.text = ""
+        envManageBtn.icon = AllIcons.General.GearPlain
         envManageBtn.toolTipText = I18nManager.t("env.manageBtn.tooltip")
         baseUrlLabel.text = I18nManager.t("toolbar.baseUrl")
         baseUrlField.toolTipText = I18nManager.t("toolbar.baseUrl.tooltip")
@@ -1484,12 +1511,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         runAllBtn.text = I18nManager.t("toolbar.runAll")
         stopBtn.text = I18nManager.t("toolbar.stop")
         refreshUpdateButtonAppearance()
-        languageLabel.text = I18nManager.t("toolbar.langLabel")
-        languageComboBox.toolTipText = I18nManager.t("toolbar.lang.tooltip")
+        languageSegmentSwitch.toolTipText = I18nManager.t("toolbar.lang.tooltip")
         isUpdatingUi = true
         try {
-            languageComboBox.selectedItem = lang
-            languageComboBox.repaint()
+            languageSegmentSwitch.setSelectedLanguage(lang)
         } finally {
             isUpdatingUi = false
         }
@@ -1590,6 +1615,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             updateDirtyIndicator()
         }
+        topHeaderBarPanel.revalidate()
         topToolbarPanel.revalidate()
         revalidate()
         repaint()
@@ -2076,6 +2102,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioComboBox.toolTipText = label.ifEmpty { null }
         val estimatedWidth = (label.length * 9 + 56).coerceIn(260, 380)
         scenarioComboBox.preferredSize = Dimension(estimatedWidth, 28)
+        topHeaderBarPanel.revalidate()
         topToolbarPanel.revalidate()
     }
 

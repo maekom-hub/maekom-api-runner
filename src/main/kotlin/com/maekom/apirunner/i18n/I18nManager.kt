@@ -146,9 +146,10 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.lang.en" to "영어(EN)",
             "toolbar.lang.tooltip" to "플러그인 표시 언어 전환 (한국어 / English)",
 
+            // [v0.2.1] 환경 관리 톱니바퀴 아이콘 전용 버튼 툴팁 문구 정비
             // Environment Profiles (Local / DEV / STG / PRD)
             "env.manageBtn" to "⚙ 환경 관리",
-            "env.manageBtn.tooltip" to "BaseURL 환경 프로필(Local, DEV, STG, PRD 등) 추가·수정·삭제",
+            "env.manageBtn.tooltip" to "환경 프로필 관리 (Local / DEV / STG / PRD)",
             "env.combo.tooltip" to "환경 프로필 선택 (시나리오를 전환해도 유지됨)",
             "env.dialog.title" to "BaseURL 환경 프로필 관리",
             "env.dialog.hint" to "환경별 BaseURL 프로필(.maekom/environments.json)을 관리합니다. 시나리오를 전환해도 초기화되지 않고 유지됩니다. (Local은 application.yml/properties 포트를 자동 감지합니다.)",
@@ -265,7 +266,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "result.extractedCol.value" to "추출된 값",
             "result.extractedCol.copy" to "복사",
             "result.responseHeader" to "응답 본문 (JSON / Raw Text)",
-            "result.extractFromResponse" to "+ 응답에서 변수 추출",
+            "result.extractFromResponse" to "응답 변수 추출",
             "result.extractFromResponse.tooltip" to "현재 응답 JSON에서 필드를 선택해 응답 변수 추출 규칙에 자동 추가",
             "result.context.addExtractRule" to "🌶️ 이 필드를 추출 변수로 추가",
 
@@ -536,7 +537,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Environment Profiles (Local / DEV / STG / PRD)
             "env.manageBtn" to "⚙ Envs",
-            "env.manageBtn.tooltip" to "Add, edit, or delete BaseURL environment profiles (Local, DEV, STG, PRD)",
+            "env.manageBtn.tooltip" to "Manage Environment Profiles (Local / DEV / STG / PRD)",
             "env.combo.tooltip" to "Select active BaseURL environment profile (persisted across scenarios)",
             "env.dialog.title" to "BaseURL Environment Profiles",
             "env.dialog.hint" to "Manage per-environment BaseURL profiles (.maekom/environments.json). Preserved across scenario switches. ('Local' auto-detects server.port from application.yml/properties.)",
@@ -653,7 +654,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "result.extractedCol.value" to "Extracted Value",
             "result.extractedCol.copy" to "Copy",
             "result.responseHeader" to "Response Body (JSON / Raw Text)",
-            "result.extractFromResponse" to "+ Extract from Response",
+            "result.extractFromResponse" to "Extract Variables",
             "result.extractFromResponse.tooltip" to "Pick a field from response JSON and add it to Extract Rules",
             "result.context.addExtractRule" to "🌶️ Add Field to Extract Rules",
 

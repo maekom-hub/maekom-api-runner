@@ -25,9 +25,10 @@
 - **🤖 `@ModelAttribute` / POJO & `@RequestBody` 자동 샘플링**
   - `@RequestParam`, `@ModelAttribute` 및 매핑 어노테이션이 생략된 커스텀 DTO / Java `record`의 필드(상속·중첩 필드 포함)를 재귀 탐색해 **`Params` 전용 탭**(`전송 여부 | Key | Value | Description`)으로 자동 추출하며, Javadoc / `@Schema` / `@Parameter` 설명도 함께 채워 넣습니다.
   - `@RequestBody` DTO 및 Java `record`는 순환 참조를 방지하며 포맷팅된 JSON 샘플 본문을 자동 생성하고, `application.yml` / `application.properties`에서 `server.port`를 읽어 `BaseURL`을 자동 세팅합니다.
-- **🗂️ 통합 시나리오 관리, 환경 프로필(`Local/DEV/STG/PRD`), 타 시나리오 공통 헤더 가져오기 & 스마트 자동 저장**
-  - 상단 글로벌 툴바를 **`시나리오 → 저장 → 시나리오 관리 ▾(생성/이름변경/복제/삭제/불러오기/내보내기 통합) → 공통 헤더 관리 → 변수 관리 → cURL 복사 → 전체 실행 → 중지 → 업데이트 확인 → 언어선택(한국어/영어)`** 순으로 깔끔하게 정렬했습니다.
-  - 요청 편집 영역 최상단에 **환경 프로필 셀렉트박스(`Local / DEV / STG / PRD`)**와 **`[⚙ 환경 관리]`**를 제공해 `.maekom/environments.json`에 프로젝트별 환경 BaseURL을 영속 저장합니다. `Local` 선택 시 `application.yml`/`properties` 포트를 자동 감지하며, 시나리오를 전환해도 환경 프로필이 그대로 유지됩니다.
+- **🗂️ 최상단 타이틀 헤더 바, 통합 시나리오 관리, 환경 프로필(`Local/DEV/STG/PRD`), 공통 헤더 가져오기 & 스마트 자동 저장**
+  - **최상단 타이틀 헤더 바:** 좌측에 `Maekom API` 타이틀 + **`[업데이트 확인]`** + **`[ 한국어 | English ]` 2단 세그먼트 스위치**, 맨 우측에 **실행 상태(`200 OK`) | 소요 시간(`ms`) | 저장 상태(`● 미저장 / 저장됨 / 자동 저장됨 HH:mm`)**를 한눈에 배치했습니다.
+  - 글로벌 툴바를 **`시나리오 → 저장 → 시나리오 관리 ▾(생성/이름변경/복제/삭제/불러오기/내보내기 통합) → 공통 헤더 관리 → 변수 관리 → cURL 복사 → 전체 실행 → 중지`** 순으로 깔끔하게 정렬했습니다.
+  - 요청 편집 영역 최상단에 **`[Local ▾] → BaseURL 입력창 → [SSL 무시] → [⚙]`(아이콘 전용 환경 관리 버튼)**을 배치해 `.maekom/environments.json`에 프로젝트별 환경 BaseURL을 영속 저장합니다. `Local` 선택 시 `application.yml`/`properties` 포트를 자동 감지하며, 시나리오를 전환해도 환경 프로필이 그대로 유지됩니다.
   - 공통 헤더 관리 창(`공통 헤더 | 시나리오 변수 | 로컬 시크릿`)의 **`[📥 다른 시나리오에서 가져오기]`** 및 **`[📥 JSON 일괄 입력]`** 기능으로 공통 헤더 병합/덮어쓰기와 시나리오 변수·로컬 시크릿 대량 등록을 지원합니다.
   - 경량 `Alarm` 기반 **스마트 자동 저장**이 변경(Dirty) 상태일 때만 마지막 수정 후 30초 디바운스로 조용히 저장(유휴 시 디스크 I/O 0)하며, 상태 라벨에 마지막 자동 저장 시각(`자동 저장됨 HH:mm`)을 표시합니다.
 - **🌐 3탭 변수 관리 (`변수 관리`), JSON 일괄 입력 & 변수명 중복 검증**
@@ -35,7 +36,7 @@
   - 전역 변수·시나리오 변수·로컬 시크릿 JSON 일괄 입력(객체 `{...}` / 배열 `[{...}]` 모두 지원) 및 응답 추출 변수 입력 시 **공통 변수명 중복 검증기(`VariableNameValidator`)**가 충돌을 자동 검사하고 추천 변수명을 제안·적용합니다.
   - URL·Params(Value)·Headers(Value)·Body(JSON) 입력창에서 우클릭(**`🌶️ 동적/추출 변수 삽입 ▶`**)으로 내장 동적 변수·추출 변수·전역 변수를 커서 위치에 즉시 삽입할 수 있습니다.
 - **🔗 멀티 스텝 시나리오 체이닝, 원클릭 JsonPath 추출 & Fail-Fast**
-  - Jayway `JsonPath`로 응답 값을 추출해 다음 스텝으로 전달하며, **`[? 가이드]`** 팝업과 우측 응답 JSON 우클릭(**`[🌶️ 이 필드를 추출 변수로 추가]`**) / **`[+ 응답에서 변수 추출]`** 버튼으로 JsonPath를 자동 계산해 등록합니다.
+  - Jayway `JsonPath`로 응답 값을 추출해 다음 스텝으로 전달하며, **`[? 가이드]`** 팝업과 우측 `응답` 탭 우측 정렬 **`[응답 변수 추출]`** 버튼 / 응답 JSON 우클릭(**`[🌶️ 이 필드를 추출 변수로 추가]`**)으로 JsonPath를 자동 계산해 등록합니다.
   - 네트워크 오류, 기대 상태 코드 불일치, 필수 추출 실패 시 즉시 `ABORTED`로 중단(Fail-Fast)하고 요청/응답 전문과 상세 로그를 출력합니다.
 - **📋 cURL 복사, 반응형 툴바, `KO / EN` 전환 & 🚀 새 버전 자동 알림**
   - **`[cURL 복사 ▾]`**로 현재 스텝 단건 cURL 또는 전체 시나리오 순차 실행 스크립트(활성 `Params`·동적/추출/전역 변수 치환 반영)를 즉시 복사할 수 있습니다.
@@ -79,9 +80,10 @@ URL, `Params`, `Headers`, `Body (JSON)` 어디서나 사용할 수 있으며, �
 - **🤖 Spring `@ModelAttribute` / POJO & `@RequestBody` Auto-Sampler**
   - Recursively inspects `@RequestParam`, `@ModelAttribute`, and unannotated custom DTO / Java `record` parameters (including inherited & nested fields while excluding framework types such as `HttpServletRequest`, `Principal`, `Pageable`, `BindingResult`) into a dedicated **`Params`** tab (`Send | Key | Value | Description`), automatically pulling descriptions from Javadoc, `@Schema`, and `@Parameter`.
   - Generates pretty-printed JSON request body samples for `@RequestBody` DTOs & Java `record`s (max depth 4, cycle-safe) and auto-detects `server.port` from `application.yml` / `application.properties` to configure `BaseURL`.
-- **🗂️ Unified Scenario Management, Persistent Environment Profiles (`Local/DEV/STG/PRD`), Import Common Headers & Smart Auto-Save**
-  - Streamlined global toolbar ordered logically: **`Scenario → Save → Scenarios ▾ (New/Rename/Duplicate/Delete/Import/Export) → Common Headers → Variables → Copy cURL → Run Scenario → Stop → Check Updates → Language (KO/EN)`**.
-  - Persistent **Environment Profiles** (`.maekom/environments.json`) placed directly above the HTTP Method/URL bar let you switch `Local` (auto-detected `server.port`) ↔ `DEV` / `STG` / `PRD` instantly without resetting across scenario switches.
+- **🗂️ Top Title Header Bar, Unified Scenario Management, Persistent Environment Profiles (`Local/DEV/STG/PRD`) & Smart Auto-Save**
+  - **Top Header Bar:** Places the `Maekom API` title, **`[Check Updates]`** button, and a one-click **`[ 한국어 | English ]` pill segmented switch** on the left, with real-time **Execution Status | Duration | Save State** right-aligned on the far right.
+  - Streamlined toolbar ordered logically: **`Scenario → Save → Scenarios ▾ (New/Rename/Duplicate/Delete/Import/Export) → Common Headers → Variables → Copy cURL → Run Scenario → Stop`**.
+  - Persistent **Environment Profiles** (`.maekom/environments.json`) placed directly above the HTTP Method/URL bar (`[Local ▾] → BaseURL → [Ignore SSL] → [⚙]`) let you switch `Local` (auto-detected `server.port`) ↔ `DEV` / `STG` / `PRD` instantly without resetting across scenario switches.
   - **`[📥 Import from Another Scenario]`** in Common Headers (Merge/Overwrite preview) and **`[📥 Bulk JSON Import]`** (supports both JSON objects `{...}` and arrays `[{...}]`) across **Project Global Variables**, **Scenario Variables**, and **Local Secrets** with automatic duplicate validation.
   - Lightweight `Alarm`-based **Smart Auto-Save** debounces 30 seconds after edits only when dirty (zero disk I/O while idle) and displays the last auto-saved timestamp (`Auto-saved HH:mm`).
 - **🌐 3-Tab Variables Hub (`{{$}} Variables`), Global Variables CRUD & Duplicate Validator**
@@ -129,6 +131,7 @@ Usable anywhere in URL, `Params`, `Headers`, or `Body (JSON)` and evaluated live
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.2.1` | 2026-11-19 | 최상단 헤더 바 재구성(`Maekom API` + 업데이트 확인 + `한국어 \| English` 세그먼트 스위치 / 우측 상태·소요·저장 표시줄), `BaseURL` 환경 바 `[⚙]` 톱니바퀴 아이콘 전용화 및 `응답 변수 추출` 버튼 우측 정렬 / Top header bar (`한국어 \| English` pill switch, updates, right-aligned status/duration/save state), compact `[⚙]` env button & right-aligned `Extract Variables` button | [maekom-api-runner-0.2.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.2.1/maekom-api-runner-0.2.1.zip) |
 | `v0.2.0` | 2026-11-19 | 상단 툴바 전면 재정렬(Import/Export 통합·언어선택 콤보박스), `Local/DEV/STG/PRD` 환경 프로필 영속 관리(`.maekom/environments.json`), 전역 변수·시나리오 변수·로컬 시크릿 JSON 일괄 입력, 전체 실행 완료 상태 멈춤 수정 및 단건 실행 선택 유지·버튼 스타일 통일 / Reordered global toolbar & Language selector, persistent `Local/DEV/STG/PRD` environment profiles, Bulk JSON Import across Global/Scenario/Secret tabs, fix stuck Running status & preserve step selection on single run | [maekom-api-runner-0.2.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.2.0/maekom-api-runner-0.2.0.zip) |
 | `v0.1.5` | 2026-11-19 | `BaseURL`/`SSL 무시` 요청 편집기 최상단 배치, 우측 결과 패널 3단 탭(`응답` / `추출 변수 (N)` / `실행 및 에러 로그` + 로그 지우기) 분리 및 실행 로그 실시간 갱신·자동 스크롤 수정 / Relocate `BaseURL`+`Ignore SSL` above Method/URL, split right pane into 3 tabs (`Response` / `Extracted Vars (N)` / `Execution & Error Logs`), and fix live log auto-refresh | [maekom-api-runner-0.1.5.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.5/maekom-api-runner-0.1.5.zip) |
 | `v0.1.4` | 2026-11-19 | 응답 변수 추출 `[? 가이드]` 팝업 하단 `%s` 노출 버그 수정, `BaseURL` 및 `SSL 무시` 옵션을 요청 편집 영역 최상단(Method/URL 바로 위)으로 재배치 / Fix raw `%s` in `[? Guide]` popup & relocate `BaseURL` + `Ignore SSL` bar directly above Method/URL line | [maekom-api-runner-0.1.4.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.4/maekom-api-runner-0.1.4.zip) |
