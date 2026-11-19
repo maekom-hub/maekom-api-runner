@@ -39,15 +39,18 @@ class ScenarioRunner(
 
     fun isCancelled(): Boolean = cancelled.get()
 
+    // [v0.1.3] 프로젝트 공용 전역 변수(projectGlobalVariables) 병합 및 활성 공통 헤더(effectiveEnabledHeadersMap) 반영
     fun runScenario(
         scenario: ApiScenario,
         secrets: Map<String, String> = emptyMap(),
         initialContext: Map<String, String> = emptyMap(),
+        projectGlobalVariables: Map<String, String> = emptyMap(),
         listener: ScenarioRunListener? = null
     ): ScenarioExecutionSummary {
         cancelled.set(false)
         val startNanos = System.nanoTime()
         val runtimeContext = LinkedHashMap<String, String>(initialContext)
+        val effectiveGlobals = mergeGlobalVariables(scenario.globalVariables, projectGlobalVariables)
         val results = mutableListOf<StepExecutionResult>()
         var aborted = false
         var abortReason: String? = null
@@ -96,7 +99,8 @@ class ScenarioRunner(
                 stepIndex = index,
                 scenario = scenario,
                 runtimeContext = runtimeContext,
-                secrets = secrets
+                secrets = secrets,
+                effectiveGlobals = effectiveGlobals
             )
             results.add(result)
             listener?.onStepCompleted(result)
@@ -125,16 +129,29 @@ class ScenarioRunner(
         stepIndex: Int,
         scenario: ApiScenario,
         secrets: Map<String, String> = emptyMap(),
-        runtimeContext: MutableMap<String, String> = linkedMapOf()
+        runtimeContext: MutableMap<String, String> = linkedMapOf(),
+        projectGlobalVariables: Map<String, String> = emptyMap()
     ): StepExecutionResult {
         cancelled.set(false)
+        val effectiveGlobals = mergeGlobalVariables(scenario.globalVariables, projectGlobalVariables)
         return executeStepInternal(
             step = step,
             stepIndex = stepIndex,
             scenario = scenario,
             runtimeContext = runtimeContext,
-            secrets = secrets
+            secrets = secrets,
+            effectiveGlobals = effectiveGlobals
         )
+    }
+
+    private fun mergeGlobalVariables(
+        scenarioGlobals: Map<String, String>,
+        projectGlobals: Map<String, String>
+    ): LinkedHashMap<String, String> {
+        val merged = linkedMapOf<String, String>()
+        merged.putAll(scenarioGlobals)
+        merged.putAll(projectGlobals)
+        return merged
     }
 
     private fun executeStepInternal(
@@ -142,19 +159,20 @@ class ScenarioRunner(
         stepIndex: Int,
         scenario: ApiScenario,
         runtimeContext: MutableMap<String, String>,
-        secrets: Map<String, String>
+        secrets: Map<String, String>,
+        effectiveGlobals: Map<String, String>
     ): StepExecutionResult {
         val resolvedBaseUrl = VariableResolver.resolve(
             template = scenario.baseUrl,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val resolvedStepUrl = VariableResolver.resolve(
             template = step.url,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val combinedUrl = VariableResolver.combineUrl(resolvedBaseUrl, resolvedStepUrl)
         val fullUrl = VariableResolver.appendQueryParams(
@@ -162,21 +180,21 @@ class ScenarioRunner(
             queryParams = step.queryParams,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
 
-        val mergedHeaders = VariableResolver.mergeHeaders(scenario.globalHeaders, step.headers)
+        val mergedHeaders = VariableResolver.mergeHeaders(scenario.effectiveEnabledHeadersMap(), step.headers)
         val resolvedHeaders = VariableResolver.resolveMap(
             source = mergedHeaders,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val resolvedBody = VariableResolver.resolve(
             template = step.body,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
 
         val snapshot = HttpRequestSnapshot(

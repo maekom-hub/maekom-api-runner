@@ -8,9 +8,12 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.maekom.apirunner.model.ApiScenario
+import com.maekom.apirunner.model.CommonHeaderItem
+import com.maekom.apirunner.model.GlobalVariableItem
 import java.io.File
 
-// [v0.1.2] 시나리오 이름 및 저장 파일명 안전 변경(Rename)과 중복 파일 덮어쓰기 방지 결과 모델 추가
+// [v0.1.3] 프로젝트 영속 전역 변수(.maekom/global-variables.json) 저장/로드 및 타 시나리오 공통 헤더 조회 지원 추가
+// 변경 의도: 시나리오 파일 전환 시에도 프로젝트 전역 변수가 유지되고, 다른 시나리오의 공통 헤더를 미리보기·병합/덮어쓰기할 수 있도록 지원
 enum class RenameStatus {
     SUCCESS,
     ALREADY_EXISTS,
@@ -25,7 +28,8 @@ data class RenameScenarioResult(
 )
 
 /**
- * Persists scenarios under `<project>/.maekom/scenarios/<name>.json`
+ * Persists scenarios under `<project>/.maekom/scenarios/<name>.json`,
+ * project-wide global variables under `<project>/.maekom/global-variables.json`,
  * and local sensitive variables under `<project>/.maekom/secrets.local.json`.
  */
 @Service(Service.Level.PROJECT)
@@ -43,6 +47,8 @@ class ScenarioStorageService(private val project: Project) {
     fun getScenariosDir(): File = File(getMaekomDir(), "scenarios")
 
     fun getSecretsFile(): File = File(getMaekomDir(), "secrets.local.json")
+
+    fun getGlobalVariablesFile(): File = File(getMaekomDir(), "global-variables.json")
 
     fun listScenarios(): List<String> {
         val dir = getScenariosDir()
@@ -65,6 +71,11 @@ class ScenarioStorageService(private val project: Project) {
         } catch (_: Exception) {
             null
         }
+    }
+
+    fun loadCommonHeadersOfScenario(name: String): List<CommonHeaderItem> {
+        val scenario = loadScenario(name) ?: return emptyList()
+        return scenario.effectiveCommonHeaderItems()
     }
 
     fun saveScenario(scenario: ApiScenario): File {
@@ -162,6 +173,48 @@ class ScenarioStorageService(private val project: Project) {
         imported.name = uniqueName
         saveScenario(imported)
         return imported
+    }
+
+    // [v0.1.3] 프로젝트 공용 전역 변수(.maekom/global-variables.json) 영속 로드/저장
+    fun loadGlobalVariables(): MutableList<GlobalVariableItem> {
+        val file = getGlobalVariablesFile()
+        if (!file.exists() || !file.isFile) {
+            return mutableListOf()
+        }
+        return try {
+            val items: List<GlobalVariableItem> = mapper.readValue(
+                file,
+                object : TypeReference<List<GlobalVariableItem>>() {}
+            )
+            items.filter { it.key.trim().isNotEmpty() }.map { it.copy(key = it.key.trim()) }.toMutableList()
+        } catch (_: Exception) {
+            mutableListOf()
+        }
+    }
+
+    fun saveGlobalVariables(items: List<GlobalVariableItem>): File {
+        val dir = getMaekomDir()
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+        val cleaned = items
+            .filter { it.key.trim().isNotEmpty() }
+            .map { it.copy(key = it.key.trim()) }
+        val file = getGlobalVariablesFile()
+        mapper.writeValue(file, cleaned)
+        refreshVfs(file)
+        return file
+    }
+
+    fun loadEnabledGlobalVariablesMap(): LinkedHashMap<String, String> {
+        val map = linkedMapOf<String, String>()
+        for (item in loadGlobalVariables()) {
+            val key = item.key.trim()
+            if (item.enabled && key.isNotEmpty()) {
+                map[key] = item.value
+            }
+        }
+        return map
     }
 
     fun loadSecrets(): LinkedHashMap<String, String> {

@@ -9,7 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.1.2] 플러그인 자체 KO/EN 다국어 관리자에 시나리오 이름 변경, 동적 변수 도움말, 응답 추출 가이드, cURL 복사 문구 추가
+// [v0.1.3] 시나리오 관리 메뉴, 타 시나리오 공통 헤더 가져오기, 스마트 자동 저장, 전역 변수 CRUD, 변수명 중복 검증, 업데이트 확인/알림 KO/EN 문구 추가
+// 변경 의도: 모든 신규 UI 요소와 알림·다이얼로그를 플러그인 자체 KO/EN 언어 전환과 100% 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -117,6 +118,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "시나리오:",
+            "toolbar.scenarioManage" to "시나리오 관리 ▾",
+            "toolbar.scenarioManage.tooltip" to "새 시나리오 생성, 이름 변경, 복제, 삭제",
             "toolbar.rename" to "✎ 이름 변경",
             "toolbar.rename.tooltip" to "현재 시나리오 이름 및 저장 파일명 변경",
             "toolbar.save" to "저장",
@@ -124,9 +127,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.importExport" to "불러오기/내보내기 ▾",
             "toolbar.globalConfig" to "공통 헤더/시크릿",
             "toolbar.variables" to "{{\$}} 변수 도움말",
-            "toolbar.variables.tooltip" to "내장 동적 변수 및 시나리오 추출 변수 치트시트 열기",
+            "toolbar.variables.tooltip" to "전역 변수 관리, 내장 동적 변수 및 시나리오 추출 변수 치트시트 열기",
             "toolbar.curl" to "cURL 복사 ▾",
             "toolbar.curl.tooltip" to "현재 스텝 또는 전체 시나리오를 cURL 명령어로 복사",
+            "toolbar.updateCheck" to "🔄 업데이트 확인",
+            "toolbar.updateCheck.checking" to "🔄 확인 중...",
+            "toolbar.updateCheck.tooltip" to "GitHub 최신 릴리즈 버전을 즉시 확인",
+            "toolbar.updateAvailable" to "🚀 v%s 업데이트",
+            "toolbar.updateAvailable.tooltip" to "새 버전 v%s 출시됨! 클릭해 IntelliJ 업데이트 창 열기",
             "toolbar.baseUrl" to "BaseURL:",
             "toolbar.baseUrl.tooltip" to "시나리오 전역 Base URL (예: http://localhost:8080)",
             "toolbar.ignoreSsl" to "SSL 무시",
@@ -209,6 +217,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Scenario Status & Feedback
             "status.saved" to "💾 저장됨 (%s)",
+            "status.autoSaved" to "자동 저장됨 %s",
             "status.renamed" to "✎ 이름 변경됨 (%s)",
             "status.unsaved" to "● 미저장 변경사항",
             "status.globalSaved" to "🔒 공통 설정 및 시크릿 저장됨",
@@ -218,6 +227,73 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "status.stopping" to "⏹ 중단 요청 중...",
             "status.curlCopied" to "📋 cURL 복사 완료 (%s)",
             "status.extractRuleAdded" to "✅ 추출 규칙 추가됨: %s (%s)",
+
+            // Scenario Management Dropdown Menu
+            "menu.scenarioActions.title" to "시나리오 관리",
+            "menu.scenarioActions.new" to "✨ 새 시나리오 생성",
+            "menu.scenarioActions.rename" to "✎ 시나리오 이름 변경",
+            "menu.scenarioActions.duplicate" to "📋 시나리오 복제",
+            "menu.scenarioActions.delete" to "🗑️ 시나리오 삭제",
+            "menu.importExport.title" to "불러오기 / 내보내기",
+            "dialog.delete.lastReset" to "마지막 시나리오가 삭제되어 빈 기본 시나리오('default')로 초기화되었습니다.",
+
+            // Import Common Headers from Another Scenario
+            "global.col.enabled" to "활성",
+            "global.col.secret" to "Secret",
+            "global.importHeaders.btn" to "📥 다른 시나리오에서 가져오기",
+            "global.importHeaders.title" to "다른 시나리오의 공통 헤더 가져오기",
+            "global.importHeaders.selectLabel" to "원본 시나리오 선택:",
+            "global.importHeaders.modeLabel" to "적용 방식:",
+            "global.importHeaders.merge" to "병합 (Merge — 기존 유지 + 추가/갱신)",
+            "global.importHeaders.overwrite" to "덮어쓰기 (Overwrite — 기존 교체)",
+            "global.importHeaders.apply" to "가져오기 적용",
+            "global.importHeaders.empty" to "가져올 다른 시나리오 파일이 없습니다.",
+            "global.importHeaders.noHeaders" to "선택한 시나리오에 등록된 공통 헤더가 없습니다.",
+
+            // Global Variables CRUD & 3-Tab Variables Dialog
+            "vars.tab.global" to "🌐 전역 변수 (Global Variables)",
+            "vars.tab.dynamic" to "⚡ 내장 동적 변수",
+            "vars.tab.extracted" to "🔗 현재 시나리오 추출 변수",
+            "vars.global.hint" to "프로젝트 공용 전역 변수(.maekom/global-variables.json)입니다. 시나리오를 전환해도 유지되며 모든 시나리오에서 {{변수명}}으로 참조할 수 있습니다.",
+            "vars.global.add" to "+ 추가",
+            "vars.global.edit" to "✎ 수정",
+            "vars.global.delete" to "- 삭제",
+            "vars.global.col.enabled" to "활성",
+            "vars.global.col.key" to "변수명 (Key)",
+            "vars.global.col.value" to "값 (Value)",
+            "vars.global.col.secret" to "Secret 마스킹",
+            "vars.global.editDialog.addTitle" to "전역 변수 추가",
+            "vars.global.editDialog.editTitle" to "전역 변수 수정",
+            "vars.global.editDialog.key" to "변수명 (Key):",
+            "vars.global.editDialog.value" to "값 (Value):",
+            "vars.global.editDialog.enabled" to "활성화 (요청 치환에 포함)",
+            "vars.global.editDialog.secret" to "Secret 마스킹 (화면에서 값 숨김)",
+            "vars.global.editDialog.emptyKey" to "변수명을 입력하세요.",
+            "vars.global.deleteConfirm" to "선택한 전역 변수 %d개를 삭제하시겠습니까?",
+            "vars.extracted.col.source" to "출처 스텝",
+            "vars.extracted.stepSource" to "스텝 #%d",
+            "vars.extracted.runtimeSource" to "실행 컨텍스트",
+            "vars.menu.sectionExtracted" to "── 현재 시나리오 추출 변수 ──",
+            "vars.menu.sectionGlobal" to "── 전역 변수 (Global Variables) ──",
+            "vars.menu.noGlobalVars" to "(등록된 전역 변수 없음)",
+
+            // Variable Name Duplicate Validator
+            "validator.title" to "변수명 중복 확인",
+            "validator.source.reserved" to "내장 예약 접두사(\$...)",
+            "validator.source.global" to "전역 변수",
+            "validator.source.step" to "스텝 %d",
+            "validator.conflict.msg" to "이미 사용 중인 변수명입니다(기존 출처: %s).\n추천 변수명 '%s'(으)로 자동 변경하여 적용할까요?",
+            "validator.conflict.useRecommended" to "추천 변수명 적용",
+            "validator.conflict.cancel" to "직접 다시 입력",
+
+            // Plugin Update Checker & Notification
+            "update.notify.title" to "Maekom API Runner 업데이트",
+            "update.notify.content" to "Maekom API Runner v%s 업데이트가 출시되었습니다.",
+            "update.notify.action" to "지금 업데이트 확인",
+            "update.upToDate.title" to "업데이트 확인",
+            "update.upToDate.msg" to "현재 최신 버전(v%s)을 사용 중입니다.",
+            "update.checkFailed.title" to "업데이트 확인 실패",
+            "update.checkFailed.msg" to "최신 버전 정보를 조회하지 못했습니다:\n%s",
 
             // Rename Scenario Dialog
             "dialog.rename.title" to "시나리오 이름 변경",
@@ -376,6 +452,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "Scenario:",
+            "toolbar.scenarioManage" to "Scenarios ▾",
+            "toolbar.scenarioManage.tooltip" to "New, Rename, Duplicate, or Delete scenarios",
             "toolbar.rename" to "✎ Rename",
             "toolbar.rename.tooltip" to "Rename current scenario and its JSON file",
             "toolbar.save" to "Save",
@@ -383,9 +461,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.importExport" to "Import/Export ▾",
             "toolbar.globalConfig" to "Headers/Secrets",
             "toolbar.variables" to "{{\$}} Variables",
-            "toolbar.variables.tooltip" to "Open built-in dynamic & scenario variables cheat sheet",
+            "toolbar.variables.tooltip" to "Manage Global Variables, Built-in Dynamic & Extracted Variables",
             "toolbar.curl" to "Copy cURL ▾",
             "toolbar.curl.tooltip" to "Copy current step or full scenario as cURL commands",
+            "toolbar.updateCheck" to "🔄 Check Updates",
+            "toolbar.updateCheck.checking" to "🔄 Checking...",
+            "toolbar.updateCheck.tooltip" to "Immediately check GitHub Releases for a newer plugin version",
+            "toolbar.updateAvailable" to "🚀 Update v%s",
+            "toolbar.updateAvailable.tooltip" to "New version v%s available! Click to open IntelliJ Update Checker",
             "toolbar.baseUrl" to "BaseURL:",
             "toolbar.baseUrl.tooltip" to "Scenario global Base URL (e.g. http://localhost:8080)",
             "toolbar.ignoreSsl" to "Ignore SSL",
@@ -468,6 +551,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Scenario Status & Feedback
             "status.saved" to "💾 Saved (%s)",
+            "status.autoSaved" to "Auto-saved %s",
             "status.renamed" to "✎ Renamed (%s)",
             "status.unsaved" to "● Unsaved changes",
             "status.globalSaved" to "🔒 Global config & secrets saved",
@@ -477,6 +561,73 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "status.stopping" to "⏹ Stopping...",
             "status.curlCopied" to "📋 cURL copied (%s)",
             "status.extractRuleAdded" to "✅ Extract rule added: %s (%s)",
+
+            // Scenario Management Dropdown Menu
+            "menu.scenarioActions.title" to "Manage Scenarios",
+            "menu.scenarioActions.new" to "✨ New Scenario",
+            "menu.scenarioActions.rename" to "✎ Rename Scenario",
+            "menu.scenarioActions.duplicate" to "📋 Duplicate Scenario",
+            "menu.scenarioActions.delete" to "🗑️ Delete Scenario",
+            "menu.importExport.title" to "Import / Export",
+            "dialog.delete.lastReset" to "The last scenario was deleted, so an empty default scenario ('default') has been initialized.",
+
+            // Import Common Headers from Another Scenario
+            "global.col.enabled" to "Enabled",
+            "global.col.secret" to "Secret",
+            "global.importHeaders.btn" to "📥 Import from Another Scenario",
+            "global.importHeaders.title" to "Import Common Headers from Scenario",
+            "global.importHeaders.selectLabel" to "Source Scenario:",
+            "global.importHeaders.modeLabel" to "Import Mode:",
+            "global.importHeaders.merge" to "Merge (Keep existing + add/update)",
+            "global.importHeaders.overwrite" to "Overwrite (Replace existing)",
+            "global.importHeaders.apply" to "Apply Import",
+            "global.importHeaders.empty" to "No other scenarios found in this project.",
+            "global.importHeaders.noHeaders" to "Selected scenario has no common headers.",
+
+            // Global Variables CRUD & 3-Tab Variables Dialog
+            "vars.tab.global" to "🌐 Global Variables",
+            "vars.tab.dynamic" to "⚡ Built-in Dynamic",
+            "vars.tab.extracted" to "🔗 Extracted Variables",
+            "vars.global.hint" to "Project-wide Global Variables (.maekom/global-variables.json). Preserved across scenario switches and usable in all scenarios via {{varName}}.",
+            "vars.global.add" to "+ Add",
+            "vars.global.edit" to "✎ Edit",
+            "vars.global.delete" to "- Delete",
+            "vars.global.col.enabled" to "Active",
+            "vars.global.col.key" to "Variable (Key)",
+            "vars.global.col.value" to "Value",
+            "vars.global.col.secret" to "Secret Mask",
+            "vars.global.editDialog.addTitle" to "Add Global Variable",
+            "vars.global.editDialog.editTitle" to "Edit Global Variable",
+            "vars.global.editDialog.key" to "Variable (Key):",
+            "vars.global.editDialog.value" to "Value:",
+            "vars.global.editDialog.enabled" to "Enabled (include in substitution)",
+            "vars.global.editDialog.secret" to "Secret Masking (hide value in table)",
+            "vars.global.editDialog.emptyKey" to "Please enter a variable name.",
+            "vars.global.deleteConfirm" to "Delete %d selected global variable(s)?",
+            "vars.extracted.col.source" to "Source Step",
+            "vars.extracted.stepSource" to "Step #%d",
+            "vars.extracted.runtimeSource" to "Runtime Context",
+            "vars.menu.sectionExtracted" to "── Current Scenario Extracted Variables ──",
+            "vars.menu.sectionGlobal" to "── Global Variables ──",
+            "vars.menu.noGlobalVars" to "(No global variables registered)",
+
+            // Variable Name Duplicate Validator
+            "validator.title" to "Duplicate Variable Name",
+            "validator.source.reserved" to "Built-in Reserved Prefix (\$...)",
+            "validator.source.global" to "Global Variable",
+            "validator.source.step" to "Step %d",
+            "validator.conflict.msg" to "Variable name is already in use (Source: %s).\nAutomatically rename and apply recommended name '%s'?",
+            "validator.conflict.useRecommended" to "Apply Recommended",
+            "validator.conflict.cancel" to "Edit Manually",
+
+            // Plugin Update Checker & Notification
+            "update.notify.title" to "Maekom API Runner Update",
+            "update.notify.content" to "Maekom API Runner v%s is now available.",
+            "update.notify.action" to "Check Updates Now",
+            "update.upToDate.title" to "Check for Updates",
+            "update.upToDate.msg" to "You are already running the latest version (v%s).",
+            "update.checkFailed.title" to "Update Check Failed",
+            "update.checkFailed.msg" to "Unable to retrieve latest version info:\n%s",
 
             // Rename Scenario Dialog
             "dialog.rename.title" to "Rename Scenario",

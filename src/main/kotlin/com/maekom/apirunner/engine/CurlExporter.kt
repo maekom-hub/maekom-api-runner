@@ -11,23 +11,29 @@ object CurlExporter {
      * Builds a runnable POSIX `curl` command for a single [ApiStep], resolving built-in dynamic variables,
      * runtime context variables, secrets, and global variables.
      */
+    // [v0.1.3] 프로젝트 공용 전역 변수(projectGlobalVariables) 및 활성 공통 헤더(effectiveEnabledHeadersMap) 반영
     fun exportStep(
         step: ApiStep,
         scenario: ApiScenario,
         runtimeContext: Map<String, String> = emptyMap(),
-        secrets: Map<String, String> = emptyMap()
+        secrets: Map<String, String> = emptyMap(),
+        projectGlobalVariables: Map<String, String> = emptyMap()
     ): String {
+        val effectiveGlobals = linkedMapOf<String, String>().apply {
+            putAll(scenario.globalVariables)
+            putAll(projectGlobalVariables)
+        }
         val resolvedBaseUrl = VariableResolver.resolve(
             template = scenario.baseUrl,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val resolvedStepUrl = VariableResolver.resolve(
             template = step.url,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val combinedUrl = VariableResolver.combineUrl(resolvedBaseUrl, resolvedStepUrl)
         val fullUrl = VariableResolver.appendQueryParams(
@@ -35,21 +41,21 @@ object CurlExporter {
             queryParams = step.queryParams,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
 
-        val mergedHeaders = VariableResolver.mergeHeaders(scenario.globalHeaders, step.headers)
+        val mergedHeaders = VariableResolver.mergeHeaders(scenario.effectiveEnabledHeadersMap(), step.headers)
         val resolvedHeaders = VariableResolver.resolveMap(
             source = mergedHeaders,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
         val resolvedBody = VariableResolver.resolve(
             template = step.body,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            globalVariables = scenario.globalVariables
+            globalVariables = effectiveGlobals
         )
 
         val method = step.method.trim().uppercase().ifEmpty { "GET" }
@@ -81,7 +87,8 @@ object CurlExporter {
     fun exportScenario(
         scenario: ApiScenario,
         runtimeContext: Map<String, String> = emptyMap(),
-        secrets: Map<String, String> = emptyMap()
+        secrets: Map<String, String> = emptyMap(),
+        projectGlobalVariables: Map<String, String> = emptyMap()
     ): String {
         return buildString {
             appendLine("#!/usr/bin/env bash")
@@ -96,12 +103,12 @@ object CurlExporter {
 
                 if (!step.enabled) {
                     appendLine("# Step $stepNo: [$method] $title (DISABLED / 비활성 스텝)")
-                    val cmd = exportStep(step, scenario, runtimeContext, secrets)
+                    val cmd = exportStep(step, scenario, runtimeContext, secrets, projectGlobalVariables)
                     cmd.lines().forEach { appendLine("# $it") }
                     appendLine()
                 } else {
                     appendLine("# Step $stepNo: [$method] $title")
-                    appendLine(exportStep(step, scenario, runtimeContext, secrets))
+                    appendLine(exportStep(step, scenario, runtimeContext, secrets, projectGlobalVariables))
                     appendLine()
                 }
             }

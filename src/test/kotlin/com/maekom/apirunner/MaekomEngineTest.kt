@@ -6,16 +6,23 @@ import com.maekom.apirunner.engine.CurlExporter
 import com.maekom.apirunner.engine.HttpExecutor
 import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunner
+import com.maekom.apirunner.engine.VariableConflictType
+import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.engine.VariableResolver
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
+import com.maekom.apirunner.model.CommonHeaderItem
 import com.maekom.apirunner.model.ExtractRule
+import com.maekom.apirunner.model.GlobalVariableItem
 import com.maekom.apirunner.model.QueryParamItem
 import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepStatus
 import com.maekom.apirunner.psi.PsiEndpointExtractor
+import com.maekom.apirunner.ui.GlobalConfigDialog
+import com.maekom.apirunner.ui.HeaderImportMode
+import com.maekom.apirunner.update.UpdateCheckerService
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -349,5 +356,103 @@ class MaekomEngineTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun `variable name validator detects reserved, global, and step conflicts and recommends safe names`() {
+        val globals = listOf(
+            GlobalVariableItem(enabled = true, key = "apiKey", value = "secret-123", secret = true),
+            GlobalVariableItem(enabled = true, key = "dealNo", value = "D-01", secret = false)
+        )
+        val scenario = ApiScenario(
+            name = "dup-test",
+            steps = mutableListOf(
+                ApiStep(
+                    name = "Step 1",
+                    extractRules = mutableListOf(
+                        ExtractRule(varName = "apiDealNumber", jsonPath = "$.deal.apiDealNumber")
+                    )
+                )
+            )
+        )
+
+        // 1. Reserved dynamic prefix ($...)
+        val reserved = VariableNameValidator.validate("\$kstNow", globals, scenario)
+        assertFalse(reserved.isValid)
+        assertEquals(VariableConflictType.RESERVED_DYNAMIC_PREFIX, reserved.conflictType)
+        assertEquals("kstNow", reserved.recommendedName)
+
+        // 2. Global variable conflict
+        val globalConflict = VariableNameValidator.validate("apiKey", globals, scenario)
+        assertFalse(globalConflict.isValid)
+        assertEquals(VariableConflictType.GLOBAL_VARIABLE, globalConflict.conflictType)
+        assertEquals("apiKey_2", globalConflict.recommendedName)
+
+        // 3. Scenario extract rule conflict with parent JSON key suggestion
+        val stepConflict = VariableNameValidator.validate(
+            candidateName = "apiDealNumber",
+            globalVariables = globals,
+            scenario = scenario,
+            jsonPathForSuggestion = "$.deal.apiDealNumber"
+        )
+        assertFalse(stepConflict.isValid)
+        assertEquals(VariableConflictType.SCENARIO_EXTRACT_RULE, stepConflict.conflictType)
+        assertEquals("deal_apiDealNumber", stepConflict.recommendedName)
+
+        // 4. Editing same rule ignores itself
+        val selfEdit = VariableNameValidator.validate(
+            candidateName = "apiDealNumber",
+            globalVariables = globals,
+            scenario = scenario,
+            ignoreStepIndex = 0,
+            ignoreRuleIndex = 0
+        )
+        assertTrue(selfEdit.isValid)
+    }
+
+    @Test
+    fun `common headers merge and overwrite preserve enabled and secret flags cleanly`() {
+        val existing = listOf(
+            CommonHeaderItem(enabled = true, key = "Accept", value = "application/json", secret = false),
+            CommonHeaderItem(enabled = true, key = "Authorization", value = "Bearer old", secret = true)
+        )
+        val imported = listOf(
+            CommonHeaderItem(enabled = true, key = "authorization", value = "Bearer new", secret = true),
+            CommonHeaderItem(enabled = false, key = "X-Trace", value = "1", secret = false)
+        )
+
+        val merged = GlobalConfigDialog.mergeCommonHeaders(existing, imported, HeaderImportMode.MERGE)
+        assertEquals(3, merged.size)
+        assertEquals("Bearer new", merged[1].value)
+        assertTrue(merged[1].secret)
+        assertFalse(merged[2].enabled)
+
+        val overwritten = GlobalConfigDialog.mergeCommonHeaders(existing, imported, HeaderImportMode.OVERWRITE)
+        assertEquals(2, overwritten.size)
+        assertEquals("authorization", overwritten[0].key)
+
+        // Only enabled headers are exported for execution
+        val scenario = ApiScenario()
+        scenario.applyCommonHeaderItems(merged)
+        val enabledMap = scenario.effectiveEnabledHeadersMap()
+        assertEquals(2, enabledMap.size)
+        assertFalse(enabledMap.containsKey("X-Trace"))
+    }
+
+    @Test
+    fun `update checker parses updatePlugins xml and compares semantic versions accurately`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plugins>
+              <plugin id="com.maekom.apirunner" url="https://example.com/maekom-api-runner-0.1.3.zip" version="0.1.3"/>
+            </plugins>
+        """.trimIndent()
+
+        assertEquals("0.1.3", UpdateCheckerService.parseRemoteVersionFromXml(xml))
+        assertTrue(UpdateCheckerService.isNewerVersion("0.1.3", "0.1.2"))
+        assertTrue(UpdateCheckerService.isNewerVersion("0.2.0", "0.1.9"))
+        assertTrue(UpdateCheckerService.isNewerVersion("v1.0.0", "0.9.9"))
+        assertFalse(UpdateCheckerService.isNewerVersion("0.1.2", "0.1.2"))
+        assertFalse(UpdateCheckerService.isNewerVersion("0.1.1", "0.1.2"))
     }
 }

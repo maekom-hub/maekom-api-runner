@@ -30,12 +30,14 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
+import com.intellij.util.Alarm
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.WrapLayout
 import com.maekom.apirunner.engine.CurlExporter
 import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunListener
 import com.maekom.apirunner.engine.ScenarioRunner
+import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
@@ -51,6 +53,7 @@ import com.maekom.apirunner.model.StepStatus
 import com.maekom.apirunner.psi.PsiEndpointExtractor
 import com.maekom.apirunner.storage.RenameStatus
 import com.maekom.apirunner.storage.ScenarioStorageService
+import com.maekom.apirunner.update.UpdateCheckerService
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -64,6 +67,8 @@ import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
 import javax.swing.Icon
@@ -81,9 +86,9 @@ import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.1.2] 반응형 WrapLayout 툴바, 시나리오 이름 변경(Rename), 동적·추출 변수 치트시트 및 우클릭 삽입,
-//          JsonPath 가이드 & 응답 본문 원클릭 추출 규칙 추가, 단건/전체 시나리오 cURL 복사 기능 통합
-// 변경 의도: 좁은 ToolWindow 폭에서도 버튼 잘림을 방지하고, 실전 API 체이닝 작성·공유 생산성을 극대화
+// [v0.1.3] 시나리오 관리 드롭다운 통합, 30초 디바운스 스마트 자동 저장(Alarm), 프로젝트 전역 변수 3탭 허브,
+//          변수명 중복 검증기 연동, 상단 업데이트 확인/새 버전 배지 버튼 통합
+// 변경 의도: 툴바를 정돈하고 작업 유실·변수명 충돌·업데이트 캐싱 지연을 근본적으로 해소
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     companion object {
@@ -91,12 +96,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         private const val TAB_BODY = 1
         private const val TAB_HEADERS = 2
         private const val TAB_EXTRACT = 3
+        private const val AUTO_SAVE_DEBOUNCE_MS = 30_000
+        private val AUTO_SAVE_TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     }
 
     private val storage: ScenarioStorageService = project.service()
+    private val updateService: UpdateCheckerService = UpdateCheckerService.getInstance()
     private val scenarioRunner = ScenarioRunner()
     private val jsonFormatter = ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT)
     private val dirtyCheckMapper = jacksonObjectMapper()
+
+    // [v0.1.3] ToolWindow Disposable에 바인딩된 경량 Alarm (창/프로젝트 종료 시 자동 해제, 유휴 시 디스크 I/O 0)
+    private val autoSaveAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
 
     private var currentScenario: ApiScenario = ApiScenario()
     private var savedScenarioSnapshotJson: String = ""
@@ -106,6 +117,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private var isQuickSingleMode: Boolean = false
     private var isRunning: Boolean = false
     private var isUpdatingUi: Boolean = false
+    private var isCheckingUpdate: Boolean = false
+    private var availableUpdateVersion: String? = updateService.latestAvailableVersion
+    private var lastAutoSavedTime: String? = null
 
     private val stepStatuses = mutableMapOf<String, StepStatus>()
     private val stepResults = mutableMapOf<String, StepExecutionResult>()
@@ -116,9 +130,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val scenarioLabel = JBLabel()
     private val scenarioComboModel = DefaultComboBoxModel<String>()
     private val scenarioComboBox = ComboBox(scenarioComboModel)
-    private val renameScenarioBtn = JButton()
+    private val scenarioManageBtn = JButton()
     private val saveBtn = JButton()
-    private val newScenarioBtn = JButton()
     private val importExportBtn = JButton()
     private val globalConfigBtn = JButton()
     private val variablesHelpBtn = JButton()
@@ -128,6 +141,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val ignoreSslCheckbox = JBCheckBox()
     private val runAllBtn = JButton()
     private val stopBtn = JButton()
+    private val updateCheckBtn = JButton()
     private val languageToggleBtn = JButton()
 
     // Quick-Single Mode Banner
@@ -238,6 +252,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 applyTranslations()
             }
         }
+
+        updateService.addUpdateListener(this) { newVersion ->
+            ApplicationManager.getApplication().invokeLater {
+                availableUpdateVersion = newVersion
+                refreshUpdateButtonAppearance()
+            }
+        }
     }
 
     private fun buildLayout() {
@@ -258,7 +279,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         add(mainSplitter, BorderLayout.CENTER)
 
-        // [v0.1.2] 창 가로 폭 변경 시 WrapLayout 툴바 높이를 즉시 재계산해 버튼 잘림 방지
         addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) {
                 topToolbarPanel.revalidate()
@@ -275,9 +295,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         baseUrlField.preferredSize = Dimension(170, 28)
         stopBtn.isEnabled = false
 
-        renameScenarioBtn.margin = JBUI.insets(2, 7)
+        scenarioManageBtn.margin = JBUI.insets(2, 7)
         variablesHelpBtn.margin = JBUI.insets(2, 7)
         curlCopyBtn.margin = JBUI.insets(2, 7)
+        updateCheckBtn.margin = JBUI.insets(2, 7)
         languageToggleBtn.font = languageToggleBtn.font.deriveFont(Font.BOLD)
         languageToggleBtn.margin = JBUI.insets(2, 8)
 
@@ -286,9 +307,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         topToolbarPanel.add(scenarioLabel)
         topToolbarPanel.add(scenarioComboBox)
-        topToolbarPanel.add(renameScenarioBtn)
+        topToolbarPanel.add(scenarioManageBtn)
         topToolbarPanel.add(saveBtn)
-        topToolbarPanel.add(newScenarioBtn)
         topToolbarPanel.add(importExportBtn)
         topToolbarPanel.add(globalConfigBtn)
         topToolbarPanel.add(variablesHelpBtn)
@@ -298,6 +318,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.add(ignoreSslCheckbox)
         topToolbarPanel.add(runAllBtn)
         topToolbarPanel.add(stopBtn)
+        topToolbarPanel.add(updateCheckBtn)
         topToolbarPanel.add(languageToggleBtn)
 
         return topToolbarPanel
@@ -473,7 +494,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         summaryBar.add(scenarioStatusLabel)
         panel.add(summaryBar, BorderLayout.NORTH)
 
-        // Tab 0: Response + Extracted Variables vertical split
         extractedVarsTable.rowHeight = 22
         extractedVarsTable.tableHeader.reorderingAllowed = false
         extractedHeaderLabel.apply {
@@ -503,7 +523,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             secondComponent = responsePanel
         }
 
-        // Tab 1: Detailed Request/Response & Failure Log
         val logScroll = JBScrollPane(detailLogArea)
 
         resultTabs.addTab("응답 / 추출 변수", resultSplitter)
@@ -524,12 +543,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun wireEvents() {
-        // Language toggle switch [KO / EN]
         languageToggleBtn.addActionListener {
             I18nManager.getInstance().toggleLanguage()
         }
 
-        // Scenario ComboBox change with Dirty Check
         scenarioComboBox.addActionListener {
             if (isUpdatingUi) return@addActionListener
             val selectedName = scenarioComboBox.selectedItem as? String ?: return@addActionListener
@@ -537,13 +554,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             handleScenarioSwitchRequest(selectedName)
         }
 
-        renameScenarioBtn.addActionListener { renameCurrentScenarioDialog() }
+        scenarioManageBtn.addActionListener { showScenarioManageMenu() }
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
-        newScenarioBtn.addActionListener { createNewScenarioDialog() }
         importExportBtn.addActionListener { showImportExportMenu() }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
         variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
         curlCopyBtn.addActionListener { showCurlCopyMenu() }
+        updateCheckBtn.addActionListener { handleUpdateCheckButtonClick() }
 
         baseUrlField.document.addDocumentListener(simpleDocListener {
             if (!isUpdatingUi) {
@@ -660,10 +677,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             syncEditorToCurrentStep()
         }
 
-        // Extract Rules Tab buttons
+        // Extract Rules Tab buttons (with automatic unique default name)
         addRuleBtn.addActionListener {
             stopTableEditing(extractRulesTable)
-            extractRulesTableModel.addRow(arrayOf<Any>("token", "$.data.token", true))
+            val existingNames = VariableNameValidator.collectAllExistingNames(
+                globalVariables = storage.loadGlobalVariables(),
+                scenario = currentScenario
+            )
+            val defaultName = VariableNameValidator.generateRecommendedName("token", existingNames)
+            extractRulesTableModel.addRow(arrayOf<Any>(defaultName, "$.data.token", true))
             val row = extractRulesTableModel.rowCount - 1
             extractRulesTable.setRowSelectionInterval(row, row)
             extractRulesTable.editCellAt(row, 0)
@@ -681,7 +703,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             ExtractGuideDialog(project).show()
         }
 
-        // Right Pane: One-click Extract from Response button
         extractFromResponseBtn.addActionListener {
             openExtractRuleFromResponse(useCaretOffset = true)
         }
@@ -704,14 +725,54 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         extractRulesTableModel.addTableModelListener { e ->
             if (!isUpdatingUi && e.type != TableModelEvent.HEADER_ROW) {
+                if (e.type == TableModelEvent.UPDATE && e.column == 0 && e.firstRow >= 0) {
+                    validateInlineExtractRuleVarName(e.firstRow)
+                }
                 syncEditorToCurrentStep()
             }
         }
     }
 
-    // [v0.1.2] URL/Params/Headers/Body 우클릭 변수 삽입 메뉴 및 응답 본문 JSON 원클릭 추출 컨텍스트 메뉴 등록
+    // [v0.1.3] 응답 변수 추출 테이블 직접 입력 시에도 공통 VariableNameValidator로 중복 검증 및 추천명 자동 세팅
+    private fun validateInlineExtractRuleVarName(row: Int) {
+        if (row !in 0 until extractRulesTableModel.rowCount) return
+        val candidate = (extractRulesTableModel.getValueAt(row, 0)?.toString() ?: "").trim()
+        if (candidate.isEmpty()) return
+
+        val jsonPath = (extractRulesTableModel.getValueAt(row, 1)?.toString() ?: "").trim()
+        val currentStepIndex = if (isQuickSingleMode) -1 else stepTable.selectedRow
+
+        val validation = VariableNameValidator.validate(
+            candidateName = candidate,
+            globalVariables = storage.loadGlobalVariables(),
+            scenario = currentScenario,
+            ignoreStepIndex = currentStepIndex,
+            ignoreRuleIndex = row,
+            jsonPathForSuggestion = jsonPath
+        )
+
+        if (!validation.isValid) {
+            val choice = Messages.showYesNoDialog(
+                project,
+                I18nManager.t("validator.conflict.msg", validation.conflictSourceLabel, validation.recommendedName),
+                I18nManager.t("validator.title"),
+                I18nManager.t("validator.conflict.useRecommended"),
+                I18nManager.t("validator.conflict.cancel"),
+                Messages.getWarningIcon()
+            )
+            if (choice == Messages.YES) {
+                isUpdatingUi = true
+                try {
+                    extractRulesTableModel.setValueAt(validation.recommendedName, row, 0)
+                } finally {
+                    isUpdatingUi = false
+                }
+            }
+        }
+    }
+
     private fun installContextMenus() {
-        val varsProvider: () -> List<ScenarioVariableItem> = { collectScenarioVariablesForCurrentStep() }
+        val varsProvider: () -> List<ScenarioVariableItem> = { collectAllVariablesForMenus() }
 
         VariableContextMenuSupport.installOnTextComponent(urlField, varsProvider)
         VariableContextMenuSupport.installOnTextComponent(bodyTextArea, varsProvider)
@@ -728,14 +789,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             onValueUpdated = { syncEditorToCurrentStep() }
         )
 
-        // Response body right-click menu: "🌶️ 이 필드를 추출 변수로 추가"
         responseBodyArea.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) = maybeShowResponseMenu(e)
             override fun mouseReleased(e: MouseEvent) = maybeShowResponseMenu(e)
 
             private fun maybeShowResponseMenu(e: MouseEvent) {
                 if (!e.isPopupTrigger) return
-                // Move caret to clicked position so JsonPathLocator traces the clicked line accurately
                 val clickedOffset = responseBodyArea.viewToModel2D(e.point)
                 if (clickedOffset >= 0) {
                     responseBodyArea.caretPosition = clickedOffset
@@ -758,14 +817,50 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     /**
-     * Collects extracted variables declared in earlier steps (or already populated in runtimeContext)
-     * alongside scenario global variables.
+     * Collects extracted variables (from scenario steps + runtime context) for the Extracted tab & menus.
      */
-    private fun collectScenarioVariablesForCurrentStep(): List<ScenarioVariableItem> {
+    private fun collectExtractedVariablesOnly(): List<ScenarioVariableItem> {
+        val result = linkedMapOf<String, ScenarioVariableItem>()
+
+        for ((idx, step) in currentScenario.steps.withIndex()) {
+            for (rule in step.extractRules) {
+                val varName = rule.varName.trim()
+                if (varName.isNotEmpty() && !result.containsKey(varName)) {
+                    result[varName] = ScenarioVariableItem(
+                        name = varName,
+                        token = "{{$varName}}",
+                        isExtracted = true,
+                        currentValue = lastRuntimeContext[varName],
+                        sourceLabel = I18nManager.t("vars.extracted.stepSource", idx + 1)
+                    )
+                }
+            }
+        }
+
+        for ((k, v) in lastRuntimeContext) {
+            if (!result.containsKey(k)) {
+                result[k] = ScenarioVariableItem(
+                    name = k,
+                    token = "{{$k}}",
+                    isExtracted = true,
+                    currentValue = v,
+                    sourceLabel = I18nManager.t("vars.extracted.runtimeSource")
+                )
+            }
+        }
+
+        return result.values.toList()
+    }
+
+    /**
+     * Collects extracted variables (preceding steps + runtime) AND project-wide Global Variables
+     * for right-click insertion menus.
+     */
+    private fun collectAllVariablesForMenus(): List<ScenarioVariableItem> {
         val result = linkedMapOf<String, ScenarioVariableItem>()
         val activeIndex = if (isQuickSingleMode) currentScenario.steps.size else stepTable.selectedRow.coerceAtLeast(0)
 
-        // 1. Variables declared in extractRules of preceding steps
+        // 1. Extracted variables from preceding steps
         for (i in 0 until activeIndex.coerceAtMost(currentScenario.steps.size)) {
             for (rule in currentScenario.steps[i].extractRules) {
                 val varName = rule.varName.trim()
@@ -774,29 +869,44 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                         name = varName,
                         token = "{{$varName}}",
                         isExtracted = true,
-                        currentValue = lastRuntimeContext[varName]
+                        currentValue = lastRuntimeContext[varName],
+                        sourceLabel = I18nManager.t("vars.extracted.stepSource", i + 1)
                     )
                 }
             }
         }
 
-        // 2. Any runtime extracted variables from recent runs
         for ((k, v) in lastRuntimeContext) {
             if (!result.containsKey(k)) {
                 result[k] = ScenarioVariableItem(
                     name = k,
                     token = "{{$k}}",
                     isExtracted = true,
-                    currentValue = v
+                    currentValue = v,
+                    sourceLabel = I18nManager.t("vars.extracted.runtimeSource")
                 )
             }
         }
 
-        // 3. Scenario global variables
+        // 2. Project-wide enabled Global Variables (.maekom/global-variables.json)
+        for (item in storage.loadGlobalVariables()) {
+            val key = item.key.trim()
+            if (item.enabled && key.isNotEmpty() && !result.containsKey("G:$key")) {
+                result["G:$key"] = ScenarioVariableItem(
+                    name = key,
+                    token = "{{$key}}",
+                    isExtracted = false,
+                    currentValue = item.value,
+                    isSecret = item.secret
+                )
+            }
+        }
+
+        // 3. Legacy per-scenario global variables
         for ((k, v) in currentScenario.globalVariables) {
             val trimmed = k.trim()
-            if (trimmed.isNotEmpty() && !result.containsKey(trimmed)) {
-                result[trimmed] = ScenarioVariableItem(
+            if (trimmed.isNotEmpty() && !result.containsKey("G:$trimmed")) {
+                result["G:$trimmed"] = ScenarioVariableItem(
                     name = trimmed,
                     token = "{{$trimmed}}",
                     isExtracted = false,
@@ -808,7 +918,31 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         return result.values.toList()
     }
 
-    // --- Feature 2: Scenario Rename ---
+    // --- Feature 1: Consolidated Scenario Management Dropdown ---
+
+    private fun showScenarioManageMenu() {
+        val newLabel = I18nManager.t("menu.scenarioActions.new")
+        val renameLabel = I18nManager.t("menu.scenarioActions.rename")
+        val duplicateLabel = I18nManager.t("menu.scenarioActions.duplicate")
+        val deleteLabel = I18nManager.t("menu.scenarioActions.delete")
+        val actions = listOf(newLabel, renameLabel, duplicateLabel, deleteLabel)
+
+        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.scenarioActions.title"), actions) {
+            override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
+                return doFinalStep {
+                    when (selectedValue) {
+                        newLabel -> createNewScenarioDialog()
+                        renameLabel -> renameCurrentScenarioDialog()
+                        duplicateLabel -> duplicateCurrentScenario()
+                        deleteLabel -> deleteCurrentScenario()
+                    }
+                }
+            }
+        }
+        JBPopupFactory.getInstance()
+            .createListPopup(popupStep)
+            .showUnderneathOf(scenarioManageBtn)
+    }
 
     private fun renameCurrentScenarioDialog() {
         stopAllTableEdits()
@@ -860,10 +994,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    // --- Feature 4: Variable Cheat-Sheet Popup ---
+    // --- Feature 4: 3-Tab Variables Hub Dialog ---
 
     private fun openVariablesCheatSheet() {
-        VariableCheatSheetDialog(project) { collectScenarioVariablesForCurrentStep() }.show()
+        VariableCheatSheetDialog(
+            project = project,
+            storage = storage,
+            currentScenarioProvider = { currentScenario },
+            extractedVariablesProvider = { collectExtractedVariablesOnly() },
+            onGlobalVariablesChanged = { /* menus read latest storage dynamically */ }
+        ).show()
     }
 
     // --- Feature 5: One-Click Response JSON Field Extraction ---
@@ -891,11 +1031,22 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             null
         }
 
-        val dialog = AddExtractRuleDialog(project, candidates, initialCandidate)
+        val dialog = AddExtractRuleDialog(
+            project = project,
+            candidates = candidates,
+            initialCandidate = initialCandidate,
+            globalVariablesProvider = { storage.loadGlobalVariables() },
+            scenarioProvider = { currentScenario }
+        )
         if (dialog.showAndGet()) {
             val newRule = dialog.toExtractRule()
             stopTableEditing(extractRulesTable)
-            extractRulesTableModel.addRow(arrayOf<Any>(newRule.varName, newRule.jsonPath, newRule.required))
+            isUpdatingUi = true
+            try {
+                extractRulesTableModel.addRow(arrayOf<Any>(newRule.varName, newRule.jsonPath, newRule.required))
+            } finally {
+                isUpdatingUi = false
+            }
             val lastRow = extractRulesTableModel.rowCount - 1
             if (lastRow >= 0) {
                 extractRulesTable.setRowSelectionInterval(lastRow, lastRow)
@@ -910,7 +1061,53 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    // --- Feature 6: Single Step & Full Scenario Copy as cURL ---
+    // --- Feature 6: Update Check Button ---
+
+    private fun handleUpdateCheckButtonClick() {
+        val detected = availableUpdateVersion
+        if (!detected.isNullOrBlank()) {
+            updateService.invokeIdeaUpdateChecker(project)
+            return
+        }
+        if (isCheckingUpdate) return
+
+        isCheckingUpdate = true
+        updateCheckBtn.isEnabled = false
+        updateCheckBtn.text = I18nManager.t("toolbar.updateCheck.checking")
+
+        updateService.checkForUpdatesInBackground(
+            project = project,
+            showNotificationOnNew = false,
+            interactive = true
+        ) { outcome ->
+            isCheckingUpdate = false
+            updateCheckBtn.isEnabled = true
+            availableUpdateVersion = if (outcome.updateAvailable) outcome.remoteVersion else null
+            refreshUpdateButtonAppearance()
+        }
+    }
+
+    private fun refreshUpdateButtonAppearance() {
+        val newVer = availableUpdateVersion
+        if (isCheckingUpdate) {
+            updateCheckBtn.text = I18nManager.t("toolbar.updateCheck.checking")
+            return
+        }
+        if (!newVer.isNullOrBlank()) {
+            updateCheckBtn.text = I18nManager.t("toolbar.updateAvailable", newVer)
+            updateCheckBtn.toolTipText = I18nManager.t("toolbar.updateAvailable.tooltip", newVer)
+            updateCheckBtn.font = updateCheckBtn.font.deriveFont(Font.BOLD)
+            updateCheckBtn.foreground = JBColor(Color(0xD8, 0x43, 0x15), Color(0xFF, 0xAB, 0x40))
+        } else {
+            updateCheckBtn.text = I18nManager.t("toolbar.updateCheck")
+            updateCheckBtn.toolTipText = I18nManager.t("toolbar.updateCheck.tooltip")
+            updateCheckBtn.font = updateCheckBtn.font.deriveFont(Font.PLAIN)
+            updateCheckBtn.foreground = JBColor.foreground()
+        }
+        topToolbarPanel.revalidate()
+    }
+
+    // --- Copy as cURL ---
 
     private fun showCurlCopyMenu() {
         val copyStepLabel = I18nManager.t("curl.menu.step")
@@ -946,11 +1143,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val secrets = storage.loadSecrets()
+        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
         val curl = CurlExporter.exportStep(
             step = activeStep,
             scenario = currentScenario,
             runtimeContext = lastRuntimeContext,
-            secrets = secrets
+            secrets = secrets,
+            projectGlobalVariables = projectGlobals
         )
         CopyPasteManager.getInstance().setContents(StringSelection(curl))
 
@@ -972,10 +1171,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val secrets = storage.loadSecrets()
+        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
         val script = CurlExporter.exportScenario(
             scenario = currentScenario,
             runtimeContext = lastRuntimeContext,
-            secrets = secrets
+            secrets = secrets,
+            projectGlobalVariables = projectGlobals
         )
         CopyPasteManager.getInstance().setContents(StringSelection(script))
 
@@ -1002,12 +1203,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     fun applyTranslations() {
         val lang = I18nManager.getInstance().language
 
-        // Top toolbar
         scenarioLabel.text = I18nManager.t("toolbar.scenario")
-        renameScenarioBtn.text = I18nManager.t("toolbar.rename")
-        renameScenarioBtn.toolTipText = I18nManager.t("toolbar.rename.tooltip")
+        scenarioManageBtn.text = I18nManager.t("toolbar.scenarioManage")
+        scenarioManageBtn.toolTipText = I18nManager.t("toolbar.scenarioManage.tooltip")
         saveBtn.text = I18nManager.t("toolbar.save")
-        newScenarioBtn.text = I18nManager.t("toolbar.newScenario")
         importExportBtn.text = I18nManager.t("toolbar.importExport")
         globalConfigBtn.text = I18nManager.t("toolbar.globalConfig")
         variablesHelpBtn.text = I18nManager.t("toolbar.variables")
@@ -1020,10 +1219,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         ignoreSslCheckbox.toolTipText = I18nManager.t("toolbar.ignoreSsl.tooltip")
         runAllBtn.text = I18nManager.t("toolbar.runAll")
         stopBtn.text = I18nManager.t("toolbar.stop")
+        refreshUpdateButtonAppearance()
         languageToggleBtn.text = if (lang == PluginLanguage.KO) "🌐 [KO] / EN" else "🌐 KO / [EN]"
         languageToggleBtn.toolTipText = I18nManager.t("toolbar.lang.tooltip")
 
-        // Quick banner
         val quickEndpoint = lastQuickEndpoint
         quickModeLabel.text = if (quickEndpoint != null) {
             I18nManager.t("quick.banner.detail", quickEndpoint.displayName, quickEndpoint.method, quickEndpoint.path)
@@ -1033,7 +1232,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         promoteToScenarioBtn.text = I18nManager.t("quick.promote")
         exitQuickModeBtn.text = I18nManager.t("quick.exit")
 
-        // Left pane
         stepsHeaderLabel.text = I18nManager.t("steps.header")
         updateTableHeaders(
             stepTable,
@@ -1045,7 +1243,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         deleteStepBtn.text = I18nManager.t("steps.delete")
         addEmptyStepBtn.text = I18nManager.t("steps.addEmpty")
 
-        // Center pane
         expectedStatusLabel.text = I18nManager.t("editor.expectedStatus")
         expectedStatusField.toolTipText = I18nManager.t("editor.expectedStatus.tooltip")
         runSingleBtn.text = I18nManager.t("editor.runSingle")
@@ -1089,7 +1286,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         extractGuideBtn.toolTipText = I18nManager.t("extract.guide.tooltip")
         extractHintLabel.text = I18nManager.t("extract.hint")
 
-        // Right pane
         resultStatusTitleLabel.text = I18nManager.t("result.statusLabel")
         resultDurationTitleLabel.text = I18nManager.t("result.durationLabel")
         resultTabs.setTitleAt(0, I18nManager.t("result.tab.response"))
@@ -1113,7 +1309,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 I18nManager.t("result.idle")
             }
         }
-        updateDirtyIndicator()
+        val autoTime = lastAutoSavedTime
+        if (!isScenarioDirty() && autoTime != null && !isRunning) {
+            scenarioStatusLabel.text = I18nManager.t("status.autoSaved", autoTime)
+            scenarioStatusLabel.foreground = JBColor.GRAY
+        } else {
+            updateDirtyIndicator()
+        }
         topToolbarPanel.revalidate()
         revalidate()
         repaint()
@@ -1129,7 +1331,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         table.tableHeader?.repaint()
     }
 
-    // --- Dirty Check & Snapshot Management ---
+    // --- Feature 3: Dirty Check & 30s Debounced Smart Auto-Save ---
 
     private fun serializeScenarioForDirtyCheck(scenario: ApiScenario): String {
         return try {
@@ -1140,6 +1342,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun markScenarioClean() {
+        autoSaveAlarm.cancelAllRequests()
         savedScenarioSnapshotJson = serializeScenarioForDirtyCheck(currentScenario)
     }
 
@@ -1151,14 +1354,48 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun updateDirtyIndicator() {
         if (isRunning) return
         if (isScenarioDirty()) {
+            lastAutoSavedTime = null
             scenarioStatusLabel.text = I18nManager.t("status.unsaved")
             scenarioStatusLabel.foreground = JBColor(Color(0xE6, 0x51, 0x00), Color(0xFF, 0xB7, 0x4D))
-        } else if (scenarioStatusLabel.text == I18nManager.t("status.unsaved") ||
-            scenarioStatusLabel.text == "● 미저장 변경사항" ||
-            scenarioStatusLabel.text == "● Unsaved changes"
-        ) {
-            scenarioStatusLabel.text = ""
+            scheduleAutoSaveIfDirty()
+        } else {
+            autoSaveAlarm.cancelAllRequests()
+            if (scenarioStatusLabel.text == I18nManager.t("status.unsaved") ||
+                scenarioStatusLabel.text == "● 미저장 변경사항" ||
+                scenarioStatusLabel.text == "● Unsaved changes"
+            ) {
+                scenarioStatusLabel.text = ""
+            }
         }
+    }
+
+    // [v0.1.3] Dirty 상태일 때만 마지막 수정 시점으로부터 30초 디바운스 후 조용히 저장 (Idle 시 디스크 I/O 0)
+    private fun scheduleAutoSaveIfDirty() {
+        if (isQuickSingleMode || isRunning || autoSaveAlarm.isDisposed) return
+        autoSaveAlarm.cancelAllRequests()
+        autoSaveAlarm.addRequest({ performAutoSave() }, AUTO_SAVE_DEBOUNCE_MS)
+    }
+
+    private fun performAutoSave() {
+        if (project.isDisposed || isRunning || isQuickSingleMode) return
+        if (!isScenarioDirty()) return
+
+        // Avoid disrupting an active table cell edit; reschedule briefly if editing
+        if (stepTable.isEditing || paramsTable.isEditing || headersTable.isEditing || extractRulesTable.isEditing) {
+            scheduleAutoSaveIfDirty()
+            return
+        }
+
+        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
+        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
+        storage.saveScenario(currentScenario)
+        markScenarioClean()
+        refreshScenarioComboBox(currentScenario.name)
+
+        val nowText = LocalTime.now().format(AUTO_SAVE_TIME_FMT)
+        lastAutoSavedTime = nowText
+        scenarioStatusLabel.text = I18nManager.t("status.autoSaved", nowText)
+        scenarioStatusLabel.foreground = JBColor.GRAY
     }
 
     private fun handleScenarioSwitchRequest(targetScenarioName: String) {
@@ -1191,7 +1428,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 loadScenarioByName(targetScenarioName)
             }
             else -> {
-                // Cancel switch and restore ComboBox selection back to original scenario
                 isUpdatingUi = true
                 try {
                     scenarioComboBox.selectedItem = currentScenario.name
@@ -1238,6 +1474,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
+        lastAutoSavedTime = null
         markScenarioClean()
         scenarioStatusLabel.text = ""
     }
@@ -1309,10 +1546,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             )
             return
         }
+        autoSaveAlarm.cancelAllRequests()
         isQuickSingleMode = false
         quickSingleStep = null
         lastQuickEndpoint = null
         quickModeBanner.isVisible = false
+        lastAutoSavedTime = null
 
         currentScenario = loaded
         stepStatuses.clear()
@@ -1346,6 +1585,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val savedFile = storage.saveScenario(currentScenario)
+        lastAutoSavedTime = null
         markScenarioClean()
         refreshScenarioComboBox(currentScenario.name)
         if (showFeedback) {
@@ -1375,18 +1615,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun showImportExportMenu() {
         val importLabel = I18nManager.t("menu.import")
         val exportLabel = I18nManager.t("menu.export")
-        val duplicateLabel = I18nManager.t("menu.duplicate")
-        val deleteLabel = I18nManager.t("menu.delete")
-        val actions = listOf(importLabel, exportLabel, duplicateLabel, deleteLabel)
+        val actions = listOf(importLabel, exportLabel)
 
-        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.scenarioManage"), actions) {
+        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.importExport.title"), actions) {
             override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
                 return doFinalStep {
                     when (selectedValue) {
                         importLabel -> importExternalScenario()
                         exportLabel -> exportCurrentScenario()
-                        duplicateLabel -> duplicateCurrentScenario()
-                        deleteLabel -> deleteCurrentScenario()
                     }
                 }
             }
@@ -1474,20 +1710,38 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         )
         if (confirm != Messages.YES) return
 
+        autoSaveAlarm.cancelAllRequests()
         storage.deleteScenario(name)
-        initializeScenarios()
+
+        val remaining = storage.listScenarios()
+        if (remaining.isEmpty()) {
+            val detectedBaseUrl = PsiEndpointExtractor.detectServerBaseUrl(project)
+            val freshDefault = ApiScenario(name = "default", baseUrl = detectedBaseUrl)
+            storage.saveScenario(freshDefault)
+            refreshScenarioComboBox(freshDefault.name)
+            loadScenarioByName(freshDefault.name)
+            Messages.showInfoMessage(project, I18nManager.t("dialog.delete.lastReset"), I18nManager.t("dialog.delete.title"))
+        } else {
+            refreshScenarioComboBox(remaining.first())
+            loadScenarioByName(remaining.first())
+        }
     }
 
     private fun openGlobalConfigDialog() {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
+
         val currentSecrets = storage.loadSecrets()
         val dialog = GlobalConfigDialog(
             project = project,
-            initialHeaders = currentScenario.globalHeaders,
+            currentScenarioName = currentScenario.name,
+            storage = storage,
+            initialCommonHeaders = currentScenario.effectiveCommonHeaderItems(),
             initialVariables = currentScenario.globalVariables,
             initialSecrets = currentSecrets
         )
         if (dialog.showAndGet()) {
-            currentScenario.globalHeaders = dialog.getGlobalHeaders()
+            currentScenario.applyCommonHeaderItems(dialog.getCommonHeaderItems())
             currentScenario.globalVariables = dialog.getGlobalVariables()
             storage.saveSecrets(dialog.getSecrets())
             saveCurrentScenario(showFeedback = false)
@@ -1745,11 +1999,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val scenarioSnapshot = currentScenario.deepCopy()
-        // Preserve step IDs so UI status map lines up with original steps
         for (i in currentScenario.steps.indices) {
             scenarioSnapshot.steps[i].id = currentScenario.steps[i].id
         }
         val secrets = storage.loadSecrets()
+        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
 
         stepStatuses.clear()
         stepResults.clear()
@@ -1765,6 +2019,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             scenarioRunner.runScenario(
                 scenario = scenarioSnapshot,
                 secrets = secrets,
+                projectGlobalVariables = projectGlobals,
                 listener = object : ScenarioRunListener {
                     override fun onStepStarted(stepIndex: Int, step: ApiStep) {
                         ApplicationManager.getApplication().invokeLater {
@@ -1809,7 +2064,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                                     if (failedResult != null) {
                                         selectStepRow(failedResult.stepIndex)
                                         displayStepResult(failedResult)
-                                        resultTabs.selectedIndex = 1 // Focus detailed failure log immediately
+                                        resultTabs.selectedIndex = 1
                                     }
                                 }
                                 else -> {
@@ -1837,6 +2092,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val scenarioSnapshot = currentScenario.deepCopy()
         val stepSnapshot = activeStep.deepCopy().apply { id = activeStep.id }
         val secrets = storage.loadSecrets()
+        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
         val contextCopy = LinkedHashMap(lastRuntimeContext)
 
         setRunningState(true)
@@ -1853,7 +2109,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 stepIndex = stepIndex,
                 scenario = scenarioSnapshot,
                 secrets = secrets,
-                runtimeContext = contextCopy
+                runtimeContext = contextCopy,
+                projectGlobalVariables = projectGlobals
             )
 
             ApplicationManager.getApplication().invokeLater {
@@ -1887,7 +2144,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         runSingleBtn.isEnabled = !running && getActiveEditableStep() != null
         stopBtn.isEnabled = running
         scenarioComboBox.isEnabled = !running
-        renameScenarioBtn.isEnabled = !running
+        scenarioManageBtn.isEnabled = !running
     }
 
     // --- Result Rendering ---
@@ -1989,6 +2246,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     override fun dispose() {
+        autoSaveAlarm.cancelAllRequests()
         scenarioRunner.stop()
     }
 

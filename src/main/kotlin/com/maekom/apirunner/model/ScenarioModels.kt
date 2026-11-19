@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.util.UUID
 
+// [v0.1.3] 공통 헤더 항목(CommonHeaderItem: Enabled/Secret 지원) 및 프로젝트 영속 전역 변수 항목(GlobalVariableItem) 모델 추가
+// 변경 의도: 시나리오 간 공통 헤더 병합/덮어쓰기 가져오기와 시나리오 전환 시에도 유지되는 프로젝트 전역 변수 CRUD를 하위 호환되게 지원
+
 enum class HttpMethod {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS;
 
@@ -28,6 +31,26 @@ enum class ScenarioStatus {
     RUNNING,
     COMPLETED,
     ABORTED
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class CommonHeaderItem(
+    var enabled: Boolean = true,
+    var key: String = "",
+    var value: String = "",
+    var secret: Boolean = false
+) {
+    fun deepCopy(): CommonHeaderItem = copy()
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class GlobalVariableItem(
+    var enabled: Boolean = true,
+    var key: String = "",
+    var value: String = "",
+    var secret: Boolean = false
+) {
+    fun deepCopy(): GlobalVariableItem = copy()
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -91,6 +114,7 @@ data class ApiScenario(
         "Content-Type" to "application/json",
         "Accept" to "application/json"
     ),
+    var commonHeaders: MutableList<CommonHeaderItem> = mutableListOf(),
     var globalVariables: MutableMap<String, String> = linkedMapOf(),
     var steps: MutableList<ApiStep> = mutableListOf()
 ) {
@@ -99,9 +123,66 @@ data class ApiScenario(
         baseUrl = baseUrl,
         ignoreSsl = ignoreSsl,
         globalHeaders = LinkedHashMap(globalHeaders),
+        commonHeaders = commonHeaders.map { it.deepCopy() }.toMutableList(),
         globalVariables = LinkedHashMap(globalVariables),
         steps = steps.map { it.deepCopy() }.toMutableList()
     )
+
+    /**
+     * Returns structured common header items, falling back seamlessly to legacy [globalHeaders]
+     * when loading older scenario JSON files that do not contain [commonHeaders].
+     */
+    @JsonIgnore
+    fun effectiveCommonHeaderItems(): MutableList<CommonHeaderItem> {
+        if (commonHeaders.isNotEmpty()) {
+            return commonHeaders.map { it.deepCopy() }.toMutableList()
+        }
+        return globalHeaders.entries.map { (k, v) ->
+            CommonHeaderItem(enabled = true, key = k, value = v, secret = false)
+        }.toMutableList()
+    }
+
+    /**
+     * Returns only enabled common headers as a Map for HTTP execution and cURL export.
+     */
+    @JsonIgnore
+    fun effectiveEnabledHeadersMap(): LinkedHashMap<String, String> {
+        val result = linkedMapOf<String, String>()
+        if (commonHeaders.isNotEmpty()) {
+            for (item in commonHeaders) {
+                val k = item.key.trim()
+                if (item.enabled && k.isNotEmpty()) {
+                    result[k] = item.value
+                }
+            }
+            return result
+        }
+        for ((k, v) in globalHeaders) {
+            val trimmed = k.trim()
+            if (trimmed.isNotEmpty()) {
+                result[trimmed] = v
+            }
+        }
+        return result
+    }
+
+    /**
+     * Synchronizes both [commonHeaders] and legacy [globalHeaders] from edited header items.
+     */
+    @JsonIgnore
+    fun applyCommonHeaderItems(items: List<CommonHeaderItem>) {
+        commonHeaders = items
+            .filter { it.key.trim().isNotEmpty() }
+            .map { it.copy(key = it.key.trim()) }
+            .toMutableList()
+        val syncedMap = linkedMapOf<String, String>()
+        for (item in commonHeaders) {
+            if (item.enabled) {
+                syncedMap[item.key] = item.value
+            }
+        }
+        globalHeaders = syncedMap
+    }
 }
 
 data class ExtractedEndpoint(

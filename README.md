@@ -16,18 +16,20 @@
 - **🤖 `@ModelAttribute` / POJO & `@RequestBody` 자동 샘플링**
   - `@RequestParam`, `@ModelAttribute` 및 매핑 어노테이션이 생략된 커스텀 DTO / Java `record`의 필드(상속·중첩 필드 포함)를 재귀 탐색해 **`Params` 전용 탭**(`전송 여부 | Key | Value | Description`)으로 자동 추출하며, Javadoc / `@Schema` / `@Parameter` 설명도 함께 채워 넣습니다.
   - `@RequestBody` DTO 및 Java `record`는 순환 참조를 방지하며 포맷팅된 JSON 샘플 본문을 자동 생성하고, `application.yml` / `application.properties`에서 `server.port`를 읽어 `BaseURL`을 자동 세팅합니다.
+- **🗂️ 통합 시나리오 관리, 타 시나리오 공통 헤더 가져오기 & 스마트 자동 저장**
+  - 상단 **`[시나리오 관리 ▾]`** 드롭다운에서 **새 시나리오 생성 / 이름 변경(중복 방지) / 복제 / 삭제**를 한 곳에서 깔끔하게 관리하고, 시나리오 전환 시 변경사항 자동 감지(Dirty Check) 저장 확인 팝업을 제공합니다.
+  - 공통 헤더 설정 창(`활성 | Key | Value | Secret`)의 **`[📥 다른 시나리오에서 가져오기]`** 기능으로 프로젝트 내 다른 시나리오의 공통 헤더를 미리보기 후 **병합(Merge)** 또는 **덮어쓰기(Overwrite)**로 즉시 반영할 수 있습니다.
+  - 경량 `Alarm` 기반 **스마트 자동 저장**이 변경(Dirty) 상태일 때만 마지막 수정 후 30초 디바운스로 조용히 저장(유휴 시 디스크 I/O 0)하며, 상태 라벨에 마지막 자동 저장 시각(`자동 저장됨 HH:mm`)을 표시합니다.
+- **🌐 3탭 변수 허브 (`{{$}} 변수 도움말`), 프로젝트 전역 변수 CRUD & 변수명 중복 검증**
+  - **`[{{$}} 변수 도움말]`** 창에서 **① 프로젝트 영속 전역 변수(`.maekom/global-variables.json`, Secret 마스킹 지원, 시나리오 전환 시에도 유지)** CRUD, **② 8종 내장 동적 변수**, **③ 현재 시나리오 추출 변수**를 한 번에 조회·복사할 수 있습니다.
+  - 전역 변수 추가/수정 및 응답 추출 변수 입력(테이블 직접 편집·원클릭 추출 포함) 시 **공통 변수명 중복 검증기(`VariableNameValidator`)**가 전역 변수·시나리오 전체 스텝·내장 예약 접두사(`$...`) 충돌을 자동 검사하고, 부모 JSON 키 조합 또는 순번(`_2`, `_3`) 추천 변수명을 자동 제안·적용합니다.
+  - URL·Params(Value)·Headers(Value)·Body(JSON) 입력창에서 우클릭(**`🌶️ 동적/추출 변수 삽입 ▶`**)으로 내장 동적 변수·추출 변수·전역 변수를 커서 위치에 즉시 삽입할 수 있습니다.
 - **🔗 멀티 스텝 시나리오 체이닝, 원클릭 JsonPath 추출 & Fail-Fast**
-  - Jayway `JsonPath`로 응답 값을 추출해 다음 스텝의 URL·Params·Headers·Body(`{{변수명}}`)로 자동 전달합니다.
-  - **`[? 가이드]`** 팝업으로 JsonPath 작성 예시를 바로 확인할 수 있으며, 우측 응답 JSON 본문에서 필드를 우클릭(**`[🌶️ 이 필드를 추출 변수로 추가]`**)하거나 **`[+ 응답에서 변수 추출]`** 버튼을 눌러 정확한 JsonPath를 자동 계산해 추출 규칙에 즉시 추가할 수 있습니다.
+  - Jayway `JsonPath`로 응답 값을 추출해 다음 스텝으로 전달하며, **`[? 가이드]`** 팝업과 우측 응답 JSON 우클릭(**`[🌶️ 이 필드를 추출 변수로 추가]`**) / **`[+ 응답에서 변수 추출]`** 버튼으로 JsonPath를 자동 계산해 등록합니다.
   - 네트워크 오류, 기대 상태 코드 불일치, 필수 추출 실패 시 즉시 `ABORTED`로 중단(Fail-Fast)하고 요청/응답 전문과 상세 로그를 출력합니다.
-- **⏱️ 내장 동적 시간·랜덤 변수 & 변수 치트시트 / 우클릭 삽입**
-  - 별도 변수 선언 없이 실행 직전 실시간으로 평가되는 8종 동적 변수(`{{$isoTimestamp}}`, `{{$kstNow}}`, `{{$kstCompact}}`, `{{$uuid}}` 등)를 지원합니다.
-  - 상단 툴바 **`[{{$}} 변수 도움말]`** 치트시트에서 실시간 평가 값과 이전 스텝 추출 변수를 원클릭 복사할 수 있으며, URL·Params(Value)·Headers(Value)·Body(JSON) 입력창에서 우클릭(**`🌶️ 동적/추출 변수 삽입 ▶`**)으로 커서 위치에 즉시 삽입할 수 있습니다.
-- **📋 단건 API & 전체 시나리오 cURL 복사 (`Copy as cURL`)**
-  - 상단 툴바 **`[cURL 복사 ▾]`** 메뉴에서 현재 스텝 단건 cURL 또는 전체 시나리오 순차 실행 멀티라인 cURL 스크립트(활성 `Params`·동적/추출 변수 치환 반영)를 클립보드에 즉시 복사할 수 있습니다.
-- **🗂️ 시나리오 관리, 반응형 툴바 & 보안 & `KO / EN` 전환**
-  - 민감정보(`.maekom/secrets.local.json`)와 시나리오 파일(`.maekom/scenarios/*.json`)을 분리 관리하며, **`[✎ 이름 변경]`**(중복 덮어쓰기 방지) 및 시나리오 전환 시 변경사항 자동 감지(Dirty Check) 저장 확인 팝업을 제공합니다.
-  - `WrapLayout` 반응형 툴바로 ToolWindow 가로 폭을 줄여도 모든 버튼이 잘리지 않고 자동 줄바꿈되며, **`[KO / EN]`** 스위치로 재시작 없이 한국어 ↔ 영어를 즉시 전환할 수 있습니다.
+- **📋 cURL 복사, 반응형 툴바, `KO / EN` 전환 & 🚀 새 버전 자동 알림**
+  - **`[cURL 복사 ▾]`**로 현재 스텝 단건 cURL 또는 전체 시나리오 순차 실행 스크립트(활성 `Params`·동적/추출/전역 변수 치환 반영)를 즉시 복사할 수 있습니다.
+  - `WrapLayout` 반응형 툴바, 재시작 없는 **`[KO / EN]`** 언어 전환을 제공하며, IDE 시작 5초 후 백그라운드로 최신 버전을 자동 확인해 우측 하단 알림 및 상단 **`[🔄 업데이트 확인]` → `[🚀 vX.Y.Z 업데이트]`** 배지 버튼으로 IntelliJ 내장 업데이터를 즉시 호출합니다.
 
 ---
 
@@ -46,7 +48,7 @@ URL, `Params`, `Headers`, `Body (JSON)` 어디서나 사용할 수 있으며, �
 | `{{$kstIso}}` | KST 기준 ISO-8601 오프셋 포맷 (`+09:00`) | `2026-11-19T14:56:00+09:00` |
 | `{{$uuid}}` | 무작위 UUID v4 문자열 | `550e8400-e29b-41d4-a716-446655440000` |
 
-> **변수 치환 우선순위:** 내장 동적 변수(`{{$...}}`) > 실행 컨텍스트(이전 스텝 추출 변수) > `.maekom/secrets.local.json` > 시나리오 전역 변수
+> **변수 치환 우선순위:** 1순위 내장 동적 변수(`{{$...}}`) > 2순위 현재 시나리오 추출 변수(실행 컨텍스트) > 3순위 로컬 시크릿(`.maekom/secrets.local.json`) & 프로젝트 전역 변수(`.maekom/global-variables.json`)
 
 ---
 
@@ -59,7 +61,7 @@ URL, `Params`, `Headers`, `Body (JSON)` 어디서나 사용할 수 있으며, �
 1. 아래 버전별 다운로드 링크 또는 [Latest Release](https://github.com/maekom-hub/maekom-api-runner/releases/latest)에서 `.zip` 파일을 다운로드합니다.
 2. IntelliJ IDEA에서 **`Settings / Preferences` → `Plugins` → 톱니바퀴(⚙️) → `Install Plugin from Disk...`** 를 선택합니다.
 3. 다운로드한 `maekom-api-runner-<버전>.zip` 파일을 선택하고 적용 후 IDE를 재시작합니다.
-4. 재시작 시 플러그인이 Custom Plugin Repository URL을 자동으로 등록하므로, 별도의 수동 저장소 URL 설정 없이 이후 새 버전이 출시되면 IntelliJ `Plugins` 메뉴의 **`[Update]`** 버튼만으로 간편하게 업데이트할 수 있습니다.
+4. 재시작 시 플러그인이 Custom Plugin Repository URL을 자동 등록하고 새 버전 출시 시 우측 하단 알림 및 툴바 **`[🚀 vX.Y.Z 업데이트]`** 버튼으로 알려주므로, 클릭 한 번으로 IntelliJ `Plugins` 메뉴의 **`[Update]`** 버튼을 즉시 활성화할 수 있습니다.
 
 ---
 
@@ -68,7 +70,7 @@ URL, `Params`, `Headers`, `Body (JSON)` 어디서나 사용할 수 있으며, �
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
-| `v0.1.2` | 2026-11-19 | 반응형 툴바, 시나리오 이름 변경, 내장 시간변수(KST/UTC), 응답 원클릭 변수추출 및 cURL 복사 추가 | [maekom-api-runner-0.1.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.2/maekom-api-runner-0.1.2.zip) |
+| `v0.1.3` | 2026-11-19 | 시나리오 관리 메뉴(생성/이름변경/복제/삭제), 공통 헤더 가져오기, 스마트 자동저장, 전역변수 CRUD, 변수명 중복 검증/추천 및 즉시 업데이트 알림 추가 | [maekom-api-runner-0.1.3.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.3/maekom-api-runner-0.1.3.zip) |
 | `v0.1.1` | 2026-11-19 | Spring `@ModelAttribute`/POJO 자동 추출 & `Params` 전용 탭, 시나리오 전환 Dirty Check, `KO / EN` 언어 전환 스위치 추가 | [maekom-api-runner-0.1.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.1/maekom-api-runner-0.1.1.zip) |
 | `v0.1.0` | 2026-11-19 | 최초 릴리즈 (고추 Gutter 마커, `@RequestBody` 자동 샘플링, 시나리오 체이닝 & Fail-Fast, 3단 분할 ToolWindow UI) | [maekom-api-runner-0.1.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.1.0/maekom-api-runner-0.1.0.zip) |
 <!-- VERSION_HISTORY_END -->
