@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.1.3] 시나리오 관리 메뉴, 타 시나리오 공통 헤더 가져오기, 스마트 자동 저장, 전역 변수 CRUD, 변수명 중복 검증, 업데이트 확인/알림 KO/EN 문구 추가
-// 변경 의도: 모든 신규 UI 요소와 알림·다이얼로그를 플러그인 자체 KO/EN 언어 전환과 100% 동기화
+// [v0.1.4] 가이드 팝업 HTML(guide.content.html) 내 width:100%;의 % 미이스케이프로 인한 String.format 실패(%s 노출 버그) 수정
+// 변경 의도: KO/EN 양국어 가이드 팝업 하단의 내장 동적 변수 치트시트 테이블이 %s 깨짐 없이 정상 렌더링되도록 보장
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -383,7 +383,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "guide.content.html" to """
                 <html><body style='font-family:sans-serif; padding:6px;'>
                 <h3>1. JsonPath 작성 예시</h3>
-                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%;'>
+                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%%;'>
                   <tr><th>JsonPath 표현식</th><th>설명</th></tr>
                   <tr><td><code>$.data.id</code></td><td>루트 객체의 <code>data.id</code> 필드 값 추출</td></tr>
                   <tr><td><code>$.items[0].token</code></td><td><code>items</code> 배열의 첫 번째 요소에서 <code>token</code> 추출</td></tr>
@@ -722,7 +722,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "guide.content.html" to """
                 <html><body style='font-family:sans-serif; padding:6px;'>
                 <h3>1. JsonPath Examples</h3>
-                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%;'>
+                <table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse; width:100%%;'>
                   <tr><th>JsonPath Expression</th><th>Description</th></tr>
                   <tr><td><code>$.data.id</code></td><td>Extracts <code>data.id</code> field from root object</td></tr>
                   <tr><td><code>$.items[0].token</code></td><td>Extracts <code>token</code> from the first item in <code>items</code></td></tr>

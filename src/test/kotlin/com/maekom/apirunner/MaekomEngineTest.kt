@@ -230,6 +230,19 @@ class MaekomEngineTest {
 
         assertEquals(PluginLanguage.KO, manager.toggleLanguage())
         assertEquals("저장", manager.translate("toolbar.save"))
+
+        // [v0.1.4] 가이드 팝업 HTML 포맷팅(%s 치환 및 width:100%; 정상 출력) 검증
+        val sampleTable = "<table><tr><td>{{\$kstNow}}</td></tr></table>"
+        val koGuide = manager.translate("guide.content.html", sampleTable)
+        assertFalse(koGuide.contains("%s"), "KO guide should not expose raw %s")
+        assertTrue(koGuide.contains("width:100%;"))
+        assertTrue(koGuide.contains(sampleTable))
+
+        manager.toggleLanguage() // EN
+        val enGuide = manager.translate("guide.content.html", sampleTable)
+        assertFalse(enGuide.contains("%s"), "EN guide should not expose raw %s")
+        assertTrue(enGuide.contains("width:100%;"))
+        assertTrue(enGuide.contains(sampleTable))
     }
 
     @Test
