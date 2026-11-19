@@ -42,6 +42,7 @@ import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
+import com.maekom.apirunner.model.EnvironmentConfig
 import com.maekom.apirunner.model.ExtractRule
 import com.maekom.apirunner.model.ExtractedEndpoint
 import com.maekom.apirunner.model.HttpMethod
@@ -71,6 +72,7 @@ import java.awt.event.MouseEvent
 import java.io.File
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicLong
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
@@ -118,6 +120,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val autoSaveAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
 
     private var currentScenario: ApiScenario = ApiScenario()
+    private var environmentConfig: EnvironmentConfig = EnvironmentConfig()
     private var savedScenarioSnapshotJson: String = ""
     private var quickSingleStep: ApiStep? = null
     private var lastQuickEndpoint: ExtractedEndpoint? = null
@@ -128,29 +131,35 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private var isCheckingUpdate: Boolean = false
     private var availableUpdateVersion: String? = updateService.latestAvailableVersion
     private var lastAutoSavedTime: String? = null
+    private val runGeneration = AtomicLong(0)
 
     private val stepStatuses = mutableMapOf<String, StepStatus>()
     private val stepResults = mutableMapOf<String, StepExecutionResult>()
     private val lastRuntimeContext = linkedMapOf<String, String>()
 
-    // --- Top Toolbar Controls (WrapLayout 반응형 배치) ---
+    // --- Top Toolbar Controls (v0.2.0 전면 재정렬, WrapLayout 반응형 배치) ---
     private val topToolbarPanel = JPanel(WrapLayout(FlowLayout.LEFT, 4, 4))
     private val scenarioLabel = JBLabel()
     private val scenarioComboModel = DefaultComboBoxModel<String>()
     private val scenarioComboBox = ComboBox(scenarioComboModel)
-    private val scenarioManageBtn = JButton()
     private val saveBtn = JButton()
-    private val importExportBtn = JButton()
+    private val scenarioManageBtn = JButton()
     private val globalConfigBtn = JButton()
     private val variablesHelpBtn = JButton()
     private val curlCopyBtn = JButton()
-    private val baseUrlLabel = JBLabel()
-    private val baseUrlField = JBTextField(16)
-    private val ignoreSslCheckbox = JBCheckBox()
     private val runAllBtn = JButton()
     private val stopBtn = JButton()
     private val updateCheckBtn = JButton()
-    private val languageToggleBtn = JButton()
+    private val languageLabel = JBLabel()
+    private val languageComboBox = ComboBox(PluginLanguage.entries.toTypedArray())
+
+    // --- Environment Profile Controls (BaseURL 행 앞쪽 배치) ---
+    private val envComboModel = DefaultComboBoxModel<String>()
+    private val envComboBox = ComboBox(envComboModel)
+    private val envManageBtn = JButton()
+    private val baseUrlLabel = JBLabel()
+    private val baseUrlField = JBTextField(16)
+    private val ignoreSslCheckbox = JBCheckBox()
 
     // Quick-Single Mode Banner
     private val quickModeBanner = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4))
@@ -320,33 +329,68 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 return comp
             }
         }
-        // [v0.1.4] BaseURL 입력창과 SSL 무시 체크박스는 요청 상세 편집 영역 1행으로 이동하여 상단 툴바를 정돈
+        // [v0.2.0] 상단 글로벌 툴바 10개 핵심 컨트롤 순서 및 명칭 통일 + 언어선택 ComboBox 적용
+        // 변경 의도: 자주 쓰는 시나리오 저장·관리·공통헤더·변수·cURL·실행·업데이트·언어선택을 직관적 순서로 정렬
         stopBtn.isEnabled = false
 
         scenarioManageBtn.margin = JBUI.insets(2, 7)
         variablesHelpBtn.margin = JBUI.insets(2, 7)
         curlCopyBtn.margin = JBUI.insets(2, 7)
         updateCheckBtn.margin = JBUI.insets(2, 7)
-        languageToggleBtn.font = languageToggleBtn.font.deriveFont(Font.BOLD)
-        languageToggleBtn.margin = JBUI.insets(2, 8)
 
-        runAllBtn.foreground = JBColor(Color(0x1B, 0x7F, 0x3A), Color(0x6C, 0xD9, 0x7E))
+        applyRunButtonStyle(runAllBtn)
+        applyRunButtonStyle(runSingleBtn)
         stopBtn.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
 
+        languageComboBox.preferredSize = Dimension(112, 28)
+        languageComboBox.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                val lang = value as? PluginLanguage
+                val text = when (lang) {
+                    PluginLanguage.KO -> I18nManager.t("toolbar.lang.ko")
+                    PluginLanguage.EN -> I18nManager.t("toolbar.lang.en")
+                    null -> ""
+                }
+                return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
+            }
+        }
+
+        // 1) 시나리오: [ComboBox]
         topToolbarPanel.add(scenarioLabel)
         topToolbarPanel.add(scenarioComboBox)
-        topToolbarPanel.add(scenarioManageBtn)
+        // 2) [저장]
         topToolbarPanel.add(saveBtn)
-        topToolbarPanel.add(importExportBtn)
+        // 3) [시나리오 관리 ▾] (새 시나리오/이름 변경/복제/삭제/불러오기/내보내기 통합)
+        topToolbarPanel.add(scenarioManageBtn)
+        // 4) [공통 헤더 관리]
         topToolbarPanel.add(globalConfigBtn)
+        // 5) [변수 관리]
         topToolbarPanel.add(variablesHelpBtn)
+        // 6) [cURL 복사]
         topToolbarPanel.add(curlCopyBtn)
+        // 7) [▶ 전체 시나리오 실행]
         topToolbarPanel.add(runAllBtn)
+        // 8) [■ 중지]
         topToolbarPanel.add(stopBtn)
+        // 9) [업데이트 확인]
         topToolbarPanel.add(updateCheckBtn)
-        topToolbarPanel.add(languageToggleBtn)
+        // 10) 언어선택: [한국어(KO) / 영어(EN)]
+        topToolbarPanel.add(languageLabel)
+        topToolbarPanel.add(languageComboBox)
 
         return topToolbarPanel
+    }
+
+    // [v0.2.0] 전체 시나리오 실행 버튼과 단건 실행 버튼의 실행(Primary/Run) 색상·강조 스타일 통일
+    private fun applyRunButtonStyle(button: JButton) {
+        button.foreground = JBColor(Color(0x1B, 0x7F, 0x3A), Color(0x6C, 0xD9, 0x7E))
+        button.font = button.font.deriveFont(Font.BOLD)
     }
 
     private fun buildQuickModeBanner(): JPanel {
@@ -420,15 +464,35 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        // [v0.1.4] BaseURL 및 SSL 무시 체크박스를 HTTP Method / 요청 URL 바 바로 위(1행)로 재배치
-        // 변경 의도: 요청 대상 호스트와 경로를 시각적으로 한 흐름으로 묶고, GridBagLayout 가중치로 창 축소 시 찌그러짐 방지
+        // [v0.2.0] 요청 기본 환경 바(1행): [환경 선택 ComboBox] + [⚙ 환경 관리] + BaseURL + [SSL 무시]
+        // 변경 의도: Local/DEV/STG/PRD 환경 프로필을 즉시 전환하고 창 축소 시에도 가독성과 입력 공간을 보장
         val baseUrlBar = JPanel(GridBagLayout())
+        envComboBox.minimumSize = Dimension(94, 28)
+        envComboBox.preferredSize = Dimension(114, 28)
+        envManageBtn.margin = JBUI.insets(2, 6)
         baseUrlField.minimumSize = Dimension(120, 28)
-        baseUrlField.preferredSize = Dimension(260, 28)
+        baseUrlField.preferredSize = Dimension(240, 28)
+
+        baseUrlBar.add(
+            envComboBox,
+            GridBagConstraints().apply {
+                gridx = 0; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insetsRight(4)
+            }
+        )
+        baseUrlBar.add(
+            envManageBtn,
+            GridBagConstraints().apply {
+                gridx = 1; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insetsRight(8)
+            }
+        )
         baseUrlBar.add(
             baseUrlLabel,
             GridBagConstraints().apply {
-                gridx = 0; gridy = 0; weightx = 0.0
+                gridx = 2; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.WEST
                 insets = JBUI.insetsRight(6)
             }
@@ -436,7 +500,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         baseUrlBar.add(
             baseUrlField,
             GridBagConstraints().apply {
-                gridx = 1; gridy = 0; weightx = 1.0
+                gridx = 3; gridy = 0; weightx = 1.0
                 fill = GridBagConstraints.HORIZONTAL
                 anchor = GridBagConstraints.WEST
             }
@@ -444,7 +508,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         baseUrlBar.add(
             ignoreSslCheckbox,
             GridBagConstraints().apply {
-                gridx = 2; gridy = 0; weightx = 0.0
+                gridx = 4; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.EAST
                 insets = JBUI.insetsLeft(8)
             }
@@ -667,8 +731,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun wireEvents() {
-        languageToggleBtn.addActionListener {
-            I18nManager.getInstance().toggleLanguage()
+        languageComboBox.addActionListener {
+            if (isUpdatingUi) return@addActionListener
+            val chosen = languageComboBox.selectedItem as? PluginLanguage ?: return@addActionListener
+            I18nManager.getInstance().language = chosen
         }
 
         scenarioComboBox.addActionListener {
@@ -678,9 +744,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             handleScenarioSwitchRequest(selectedName)
         }
 
+        envComboBox.addActionListener {
+            if (isUpdatingUi) return@addActionListener
+            val envName = envComboBox.selectedItem as? String ?: return@addActionListener
+            applySelectedEnvironment(envName, persistSelection = true)
+        }
+        envManageBtn.addActionListener { openEnvironmentManagerDialog() }
+
         scenarioManageBtn.addActionListener { showScenarioManageMenu() }
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
-        importExportBtn.addActionListener { showImportExportMenu() }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
         variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
         curlCopyBtn.addActionListener { showCurlCopyMenu() }
@@ -688,7 +760,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         baseUrlField.document.addDocumentListener(simpleDocListener {
             if (!isUpdatingUi) {
-                currentScenario.baseUrl = baseUrlField.text.trim()
+                val editedUrl = baseUrlField.text.trim()
+                currentScenario.baseUrl = editedUrl
+                updateActiveEnvironmentProfileUrl(editedUrl)
                 updateDirtyIndicator()
             }
         })
@@ -1045,12 +1119,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     // --- Feature 1: Consolidated Scenario Management Dropdown ---
 
+    // [v0.2.0] 시나리오 관리 드롭다운에 불러오기(Import)/내보내기(Export)까지 6개 항목 완전 통합
     private fun showScenarioManageMenu() {
         val newLabel = I18nManager.t("menu.scenarioActions.new")
         val renameLabel = I18nManager.t("menu.scenarioActions.rename")
         val duplicateLabel = I18nManager.t("menu.scenarioActions.duplicate")
         val deleteLabel = I18nManager.t("menu.scenarioActions.delete")
-        val actions = listOf(newLabel, renameLabel, duplicateLabel, deleteLabel)
+        val importLabel = I18nManager.t("menu.import")
+        val exportLabel = I18nManager.t("menu.export")
+        val actions = listOf(newLabel, renameLabel, duplicateLabel, deleteLabel, importLabel, exportLabel)
 
         val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.scenarioActions.title"), actions) {
             override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
@@ -1060,6 +1137,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                         renameLabel -> renameCurrentScenarioDialog()
                         duplicateLabel -> duplicateCurrentScenario()
                         deleteLabel -> deleteCurrentScenario()
+                        importLabel -> importExternalScenario()
+                        exportLabel -> exportCurrentScenario()
                     }
                 }
             }
@@ -1067,6 +1146,64 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         JBPopupFactory.getInstance()
             .createListPopup(popupStep)
             .showUnderneathOf(scenarioManageBtn)
+    }
+
+    // [v0.2.0] BaseURL 환경 프로필(Local/DEV/STG/PRD) 전환·수정·관리 다이얼로그 연동
+    private fun openEnvironmentManagerDialog() {
+        val dialog = EnvironmentManagerDialog(
+            project = project,
+            initialProfiles = environmentConfig.profiles,
+            localPortDetector = { PsiEndpointExtractor.detectServerBaseUrl(project) }
+        )
+        if (dialog.showAndGet()) {
+            environmentConfig.profiles = dialog.getUpdatedProfiles()
+            if (environmentConfig.profiles.none { it.name.equals(environmentConfig.selectedEnvironment, ignoreCase = true) }) {
+                environmentConfig.selectedEnvironment = environmentConfig.profiles.firstOrNull()?.name ?: "Local"
+            }
+            storage.saveEnvironmentConfig(environmentConfig)
+            refreshEnvironmentComboBox()
+            applySelectedEnvironment(environmentConfig.selectedEnvironment, persistSelection = false)
+        }
+    }
+
+    private fun refreshEnvironmentComboBox() {
+        isUpdatingUi = true
+        try {
+            envComboModel.removeAllElements()
+            environmentConfig.profiles.forEach { envComboModel.addElement(it.name) }
+            envComboBox.selectedItem = environmentConfig.selectedEnvironment
+        } finally {
+            isUpdatingUi = false
+        }
+    }
+
+    private fun applySelectedEnvironment(envName: String, persistSelection: Boolean) {
+        val profile = environmentConfig.profiles.firstOrNull { it.name.equals(envName, ignoreCase = true) } ?: return
+        environmentConfig.selectedEnvironment = profile.name
+        val resolvedUrl = if (profile.builtInLocal && profile.baseUrl.isBlank()) {
+            PsiEndpointExtractor.detectServerBaseUrl(project).also { profile.baseUrl = it }
+        } else {
+            profile.baseUrl
+        }
+        if (persistSelection) {
+            storage.saveEnvironmentConfig(environmentConfig)
+        }
+        isUpdatingUi = true
+        try {
+            envComboBox.selectedItem = profile.name
+            baseUrlField.text = resolvedUrl
+            currentScenario.baseUrl = resolvedUrl
+        } finally {
+            isUpdatingUi = false
+        }
+    }
+
+    private fun updateActiveEnvironmentProfileUrl(newUrl: String) {
+        val activeName = environmentConfig.selectedEnvironment
+        val profile = environmentConfig.profiles.firstOrNull { it.name.equals(activeName, ignoreCase = true) }
+        if (profile != null && profile.baseUrl != newUrl) {
+            profile.baseUrl = newUrl
+        }
     }
 
     private fun renameCurrentScenarioDialog() {
@@ -1332,12 +1469,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioManageBtn.text = I18nManager.t("toolbar.scenarioManage")
         scenarioManageBtn.toolTipText = I18nManager.t("toolbar.scenarioManage.tooltip")
         saveBtn.text = I18nManager.t("toolbar.save")
-        importExportBtn.text = I18nManager.t("toolbar.importExport")
         globalConfigBtn.text = I18nManager.t("toolbar.globalConfig")
         variablesHelpBtn.text = I18nManager.t("toolbar.variables")
         variablesHelpBtn.toolTipText = I18nManager.t("toolbar.variables.tooltip")
         curlCopyBtn.text = I18nManager.t("toolbar.curl")
         curlCopyBtn.toolTipText = I18nManager.t("toolbar.curl.tooltip")
+        envComboBox.toolTipText = I18nManager.t("env.combo.tooltip")
+        envManageBtn.text = I18nManager.t("env.manageBtn")
+        envManageBtn.toolTipText = I18nManager.t("env.manageBtn.tooltip")
         baseUrlLabel.text = I18nManager.t("toolbar.baseUrl")
         baseUrlField.toolTipText = I18nManager.t("toolbar.baseUrl.tooltip")
         ignoreSslCheckbox.text = I18nManager.t("toolbar.ignoreSsl")
@@ -1345,8 +1484,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         runAllBtn.text = I18nManager.t("toolbar.runAll")
         stopBtn.text = I18nManager.t("toolbar.stop")
         refreshUpdateButtonAppearance()
-        languageToggleBtn.text = if (lang == PluginLanguage.KO) "🌐 [KO] / EN" else "🌐 KO / [EN]"
-        languageToggleBtn.toolTipText = I18nManager.t("toolbar.lang.tooltip")
+        languageLabel.text = I18nManager.t("toolbar.langLabel")
+        languageComboBox.toolTipText = I18nManager.t("toolbar.lang.tooltip")
+        isUpdatingUi = true
+        try {
+            languageComboBox.selectedItem = lang
+            languageComboBox.repaint()
+        } finally {
+            isUpdatingUi = false
+        }
 
         val quickEndpoint = lastQuickEndpoint
         quickModeLabel.text = if (quickEndpoint != null) {
@@ -1602,6 +1748,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     private fun initializeScenarios() {
         val detectedBaseUrl = PsiEndpointExtractor.detectServerBaseUrl(project)
+        environmentConfig = storage.loadEnvironmentConfig(detectedBaseUrl)
+        refreshEnvironmentComboBox()
+        val activeEnvUrl = environmentConfig.profiles
+            .firstOrNull { it.name.equals(environmentConfig.selectedEnvironment, ignoreCase = true) }
+            ?.baseUrl?.takeIf { it.isNotBlank() } ?: detectedBaseUrl
+
         val existingNames = storage.listScenarios()
 
         isUpdatingUi = true
@@ -1610,20 +1762,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             if (existingNames.isEmpty()) {
                 currentScenario = ApiScenario(
                     name = "default",
-                    baseUrl = detectedBaseUrl
+                    baseUrl = activeEnvUrl
                 )
                 scenarioComboModel.addElement(currentScenario.name)
                 scenarioComboBox.selectedItem = currentScenario.name
             } else {
                 existingNames.forEach { scenarioComboModel.addElement(it) }
                 val first = existingNames.first()
-                currentScenario = storage.loadScenario(first) ?: ApiScenario(name = first, baseUrl = detectedBaseUrl)
+                currentScenario = storage.loadScenario(first) ?: ApiScenario(name = first, baseUrl = activeEnvUrl)
                 scenarioComboBox.selectedItem = currentScenario.name
             }
 
-            if (currentScenario.baseUrl.isBlank()) {
-                currentScenario.baseUrl = detectedBaseUrl
-            }
+            currentScenario.baseUrl = activeEnvUrl
             baseUrlField.text = currentScenario.baseUrl
             ignoreSslCheckbox.isSelected = currentScenario.ignoreSsl
             stepTableModel.fireTableDataChanged()
@@ -1721,8 +1871,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stepResults.clear()
         lastRuntimeContext.clear()
 
+        // [v0.2.0] 시나리오 전환 시에도 현재 선택된 환경 프로필(Local/DEV/STG/PRD)과 BaseURL 설정을 유지
+        val activeEnvUrl = environmentConfig.profiles
+            .firstOrNull { it.name.equals(environmentConfig.selectedEnvironment, ignoreCase = true) }
+            ?.baseUrl?.takeIf { it.isNotBlank() }
+
         isUpdatingUi = true
         try {
+            if (activeEnvUrl != null) {
+                currentScenario.baseUrl = activeEnvUrl
+            }
             baseUrlField.text = currentScenario.baseUrl
             ignoreSslCheckbox.isSelected = currentScenario.ignoreSsl
             scenarioComboBox.selectedItem = currentScenario.name
@@ -1749,6 +1907,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         val savedFile = storage.saveScenario(currentScenario)
+        storage.saveEnvironmentConfig(environmentConfig)
         lastAutoSavedTime = null
         markScenarioClean()
         refreshScenarioComboBox(currentScenario.name)
@@ -1774,26 +1933,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         refreshScenarioComboBox(safeName)
         loadScenarioByName(safeName)
-    }
-
-    private fun showImportExportMenu() {
-        val importLabel = I18nManager.t("menu.import")
-        val exportLabel = I18nManager.t("menu.export")
-        val actions = listOf(importLabel, exportLabel)
-
-        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.importExport.title"), actions) {
-            override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
-                return doFinalStep {
-                    when (selectedValue) {
-                        importLabel -> importExternalScenario()
-                        exportLabel -> exportCurrentScenario()
-                    }
-                }
-            }
-        }
-        JBPopupFactory.getInstance()
-            .createListPopup(popupStep)
-            .showUnderneathOf(importExportBtn)
     }
 
     private fun importExternalScenario() {
@@ -1898,7 +2037,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val currentSecrets = storage.loadSecrets()
         val dialog = GlobalConfigDialog(
             project = project,
-            currentScenarioName = currentScenario.name,
+            currentScenario = currentScenario,
             storage = storage,
             initialCommonHeaders = currentScenario.effectiveCommonHeaderItems(),
             initialVariables = currentScenario.globalVariables,
@@ -2154,8 +2293,36 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
+    // [v0.2.0] 테이블 행 갱신 시 현재 선택된 스텝 행이 해제되거나 ListSelectionListener가 오작동하지 않도록 보호
+    // 변경 의도: 단건/전체 실행 중 fireTableDataChanged()로 선택이 -1로 초기화되어 편집 패널이 꼬이는 오작동 방지
+    private fun refreshStepTablePreservingSelection(forceSelectRow: Int? = null, refreshEditor: Boolean = false) {
+        val rowToKeep = forceSelectRow ?: stepTable.selectedRow
+        val prevGuard = isUpdatingUi
+        isUpdatingUi = true
+        try {
+            if (stepTableModel.rowCount > 0) {
+                stepTableModel.fireTableRowsUpdated(0, stepTableModel.rowCount - 1)
+            } else {
+                stepTableModel.fireTableDataChanged()
+            }
+            if (rowToKeep in 0 until stepTable.rowCount) {
+                if (stepTable.selectedRow != rowToKeep) {
+                    stepTable.setRowSelectionInterval(rowToKeep, rowToKeep)
+                }
+                stepTable.scrollRectToVisible(stepTable.getCellRect(rowToKeep, 0, true))
+            }
+        } finally {
+            isUpdatingUi = prevGuard
+        }
+        if (refreshEditor && rowToKeep in 0 until stepTable.rowCount) {
+            refreshEditorFromSelection()
+        }
+    }
+
     // --- Execution Engine (Background Thread -> EDT invokeLater) ---
 
+    // [v0.2.0] 전체 시나리오 실행 종료 후 상태 배지가 '실행 중...'에 멈추는 버그 수정
+    // 변경 의도: try/finally + 세대 카운터(runGeneration)로 성공·실패·중지·예외 모든 종료 시점에 최종 상태와 isRunning=false를 확정 갱신
     private fun executeFullScenario() {
         if (isRunning) return
         stopAllTableEdits()
@@ -2178,94 +2345,147 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         val secrets = storage.loadSecrets()
         val projectGlobals = storage.loadEnabledGlobalVariablesMap()
+        val generation = runGeneration.incrementAndGet()
 
         stepStatuses.clear()
         stepResults.clear()
         lastRuntimeContext.clear()
         currentScenario.steps.forEach { stepStatuses[it.id] = StepStatus.PENDING }
-        stepTableModel.fireTableDataChanged()
+        refreshStepTablePreservingSelection(forceSelectRow = stepTable.selectedRow.takeIf { it >= 0 } ?: 0)
 
         setRunningState(true)
+        statusBadgeLabel.text = I18nManager.t("result.running")
+        statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
         scenarioStatusLabel.text = I18nManager.t("status.scenarioRunning")
         scenarioStatusLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
-        // [v0.1.5] 시나리오 실행 시작 시 로그 즉시 초기화 및 시작 배너 출력 (로그 탭이 이미 열려 있어도 즉시 갱신)
         clearExecutionLog()
         appendExecutionLog("=== ▶ Scenario Run: ${scenarioSnapshot.name} (${scenarioSnapshot.steps.size} steps) ===\n")
 
         ApplicationManager.getApplication().executeOnPooledThread {
-            scenarioRunner.runScenario(
-                scenario = scenarioSnapshot,
-                secrets = secrets,
-                projectGlobalVariables = projectGlobals,
-                listener = object : ScenarioRunListener {
-                    override fun onStepStarted(stepIndex: Int, step: ApiStep) {
-                        appendExecutionLog("\n[Step #${stepIndex + 1}] ▶ ${step.method.uppercase()} ${step.url} ...\n")
-                        ApplicationManager.getApplication().invokeLater {
-                            stepStatuses[step.id] = StepStatus.RUNNING
-                            stepTableModel.fireTableDataChanged()
-                            selectStepRow(stepIndex)
-                            statusBadgeLabel.text = I18nManager.t("result.running")
-                            statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+            var completedSummary: ScenarioExecutionSummary? = null
+            var unexpectedError: Throwable? = null
+            try {
+                completedSummary = scenarioRunner.runScenario(
+                    scenario = scenarioSnapshot,
+                    secrets = secrets,
+                    projectGlobalVariables = projectGlobals,
+                    listener = object : ScenarioRunListener {
+                        override fun onStepStarted(stepIndex: Int, step: ApiStep) {
+                            appendExecutionLog("\n[Step #${stepIndex + 1}] ▶ ${step.method.uppercase()} ${step.url} ...\n")
+                            ApplicationManager.getApplication().invokeLater {
+                                if (runGeneration.get() != generation || !isRunning) return@invokeLater
+                                stepStatuses[step.id] = StepStatus.RUNNING
+                                refreshStepTablePreservingSelection(forceSelectRow = stepIndex, refreshEditor = true)
+                                statusBadgeLabel.text = I18nManager.t("result.running")
+                                statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+                            }
                         }
-                    }
 
-                    override fun onStepCompleted(result: StepExecutionResult) {
-                        appendExecutionLog(buildDetailLog(result) + "\n")
-                        ApplicationManager.getApplication().invokeLater {
-                            stepStatuses[result.stepId] = result.status
-                            stepResults[result.stepId] = result
-                            lastRuntimeContext.putAll(result.extractedVariables)
-                            stepTableModel.fireTableDataChanged()
-                            if (result.status == StepStatus.FAILED || stepTable.selectedRow == result.stepIndex) {
-                                if (result.status == StepStatus.FAILED) {
-                                    selectStepRow(result.stepIndex)
-                                }
+                        override fun onStepCompleted(result: StepExecutionResult) {
+                            appendExecutionLog(buildDetailLog(result) + "\n")
+                            ApplicationManager.getApplication().invokeLater {
+                                if (runGeneration.get() != generation) return@invokeLater
+                                stepStatuses[result.stepId] = result.status
+                                stepResults[result.stepId] = result
+                                lastRuntimeContext.putAll(result.extractedVariables)
+                                refreshStepTablePreservingSelection(
+                                    forceSelectRow = result.stepIndex,
+                                    refreshEditor = (result.status == StepStatus.FAILED)
+                                )
                                 displayStepResult(result, overwriteLog = false)
                             }
                         }
-                    }
 
-                    override fun onScenarioCompleted(summary: ScenarioExecutionSummary) {
-                        appendExecutionLog("=== ■ Scenario Finished: ${summary.scenarioStatus} (${summary.totalDurationMs} ms) ===\n")
-                        ApplicationManager.getApplication().invokeLater {
-                            lastRuntimeContext.clear()
-                            lastRuntimeContext.putAll(summary.finalContext)
-                            setRunningState(false)
-
-                            when (summary.scenarioStatus) {
-                                ScenarioStatus.COMPLETED -> {
-                                    scenarioStatusLabel.text = I18nManager.t("status.scenarioCompleted", summary.totalDurationMs)
-                                    scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
-                                }
-                                ScenarioStatus.ABORTED -> {
-                                    scenarioStatusLabel.text = I18nManager.t("status.scenarioAborted", summary.totalDurationMs)
-                                    scenarioStatusLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
-                                    val failedResult = summary.stepResults.firstOrNull { it.status == StepStatus.FAILED }
-                                    if (failedResult != null) {
-                                        selectStepRow(failedResult.stepIndex)
-                                        displayStepResult(failedResult, overwriteLog = false)
-                                        resultTabs.selectedIndex = RESULT_TAB_LOG
-                                    }
-                                }
-                                else -> {
-                                    scenarioStatusLabel.text = ""
-                                }
-                            }
+                        override fun onScenarioCompleted(summary: ScenarioExecutionSummary) {
+                            appendExecutionLog("=== ■ Scenario Finished: ${summary.scenarioStatus} (${summary.totalDurationMs} ms) ===\n")
                         }
                     }
+                )
+            } catch (t: Throwable) {
+                unexpectedError = t
+                appendExecutionLog("[FATAL ERROR] ${t.message ?: t.javaClass.simpleName}\n")
+            } finally {
+                val finalSummary = completedSummary
+                val finalError = unexpectedError
+                ApplicationManager.getApplication().invokeLater {
+                    if (runGeneration.get() != generation) return@invokeLater
+                    setRunningState(false)
+
+                    if (finalError != null) {
+                        statusBadgeLabel.text = "ERROR"
+                        statusBadgeLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                        scenarioStatusLabel.text = "⛔ ${finalError.message ?: finalError.javaClass.simpleName}"
+                        scenarioStatusLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                        resultTabs.selectedIndex = RESULT_TAB_LOG
+                        return@invokeLater
+                    }
+
+                    if (finalSummary != null) {
+                        lastRuntimeContext.clear()
+                        lastRuntimeContext.putAll(finalSummary.finalContext)
+                        for (res in finalSummary.stepResults) {
+                            stepStatuses[res.stepId] = res.status
+                            stepResults[res.stepId] = res
+                        }
+
+                        val okCount = finalSummary.stepResults.count { it.status == StepStatus.SUCCESS }
+                        val failCount = finalSummary.stepResults.count { it.status == StepStatus.FAILED }
+
+                        when (finalSummary.scenarioStatus) {
+                            ScenarioStatus.COMPLETED -> {
+                                scenarioStatusLabel.text = I18nManager.t("status.scenarioCompleted", finalSummary.totalDurationMs)
+                                scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                                val lastExecuted = finalSummary.stepResults.lastOrNull { it.status != StepStatus.SKIPPED }
+                                if (lastExecuted != null) {
+                                    refreshStepTablePreservingSelection(forceSelectRow = lastExecuted.stepIndex, refreshEditor = true)
+                                    displayStepResult(lastExecuted, overwriteLog = false)
+                                } else {
+                                    refreshStepTablePreservingSelection()
+                                    statusBadgeLabel.text = I18nManager.t("status.scenarioSummary", okCount, failCount)
+                                    statusBadgeLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                                }
+                            }
+                            ScenarioStatus.ABORTED -> {
+                                scenarioStatusLabel.text = I18nManager.t("status.scenarioAborted", finalSummary.totalDurationMs)
+                                scenarioStatusLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                                val failedResult = finalSummary.stepResults.firstOrNull { it.status == StepStatus.FAILED }
+                                if (failedResult != null) {
+                                    refreshStepTablePreservingSelection(forceSelectRow = failedResult.stepIndex, refreshEditor = true)
+                                    displayStepResult(failedResult, overwriteLog = false)
+                                    resultTabs.selectedIndex = RESULT_TAB_LOG
+                                } else {
+                                    refreshStepTablePreservingSelection()
+                                    statusBadgeLabel.text = I18nManager.t("status.scenarioAbortedSummary", okCount, failCount)
+                                    statusBadgeLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                                }
+                            }
+                            else -> {
+                                refreshStepTablePreservingSelection()
+                                statusBadgeLabel.text = I18nManager.t("result.idle")
+                                statusBadgeLabel.foreground = JBColor.GRAY
+                                scenarioStatusLabel.text = ""
+                            }
+                        }
+                    } else {
+                        refreshStepTablePreservingSelection()
+                        statusBadgeLabel.text = I18nManager.t("result.idle")
+                        statusBadgeLabel.foreground = JBColor.GRAY
+                    }
                 }
-            )
+            }
         }
     }
 
+    // [v0.2.0] 단건 실행 시 좌측 실행 스텝 목록의 선택 행이 풀리거나 편집 패널 데이터가 꼬이지 않도록 선택 상태 완벽 보존
     private fun executeCurrentSingleStep() {
         if (isRunning) return
         stopAllTableEdits()
         syncEditorToCurrentStep()
 
         val activeStep = getActiveEditableStep() ?: return
-        val stepIndex = if (isQuickSingleMode) 0 else stepTable.selectedRow.coerceAtLeast(0)
+        val selectedRowBeforeRun = if (isQuickSingleMode) -1 else stepTable.selectedRow
+        val stepIndex = if (isQuickSingleMode) 0 else selectedRowBeforeRun.coerceAtLeast(0)
 
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
@@ -2275,43 +2495,68 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val secrets = storage.loadSecrets()
         val projectGlobals = storage.loadEnabledGlobalVariablesMap()
         val contextCopy = LinkedHashMap(lastRuntimeContext)
+        val generation = runGeneration.incrementAndGet()
 
         setRunningState(true)
         if (!isQuickSingleMode) {
             stepStatuses[activeStep.id] = StepStatus.RUNNING
-            stepTableModel.fireTableDataChanged()
+            refreshStepTablePreservingSelection(forceSelectRow = selectedRowBeforeRun, refreshEditor = false)
         }
         statusBadgeLabel.text = I18nManager.t("result.singleRunning")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
-        // [v0.1.5] 단건 실행 시작 시에도 로그 버퍼 초기화 및 즉시 화면 갱신
         clearExecutionLog()
         appendExecutionLog("=== ▶ Single Step Run: ${stepSnapshot.method.uppercase()} ${stepSnapshot.url} ===\n")
 
         ApplicationManager.getApplication().executeOnPooledThread {
-            val result = scenarioRunner.runSingleStep(
-                step = stepSnapshot,
-                stepIndex = stepIndex,
-                scenario = scenarioSnapshot,
-                secrets = secrets,
-                runtimeContext = contextCopy,
-                projectGlobalVariables = projectGlobals
-            )
+            var stepResult: StepExecutionResult? = null
+            var unexpectedError: Throwable? = null
+            try {
+                val res = scenarioRunner.runSingleStep(
+                    step = stepSnapshot,
+                    stepIndex = stepIndex,
+                    scenario = scenarioSnapshot,
+                    secrets = secrets,
+                    runtimeContext = contextCopy,
+                    projectGlobalVariables = projectGlobals
+                )
+                stepResult = res
+                appendExecutionLog(buildDetailLog(res) + "\n")
+            } catch (t: Throwable) {
+                unexpectedError = t
+                appendExecutionLog("[FATAL ERROR] ${t.message ?: t.javaClass.simpleName}\n")
+            } finally {
+                val finalResult = stepResult
+                val finalError = unexpectedError
+                ApplicationManager.getApplication().invokeLater {
+                    if (runGeneration.get() != generation) return@invokeLater
+                    setRunningState(false)
 
-            appendExecutionLog(buildDetailLog(result) + "\n")
-            ApplicationManager.getApplication().invokeLater {
-                lastRuntimeContext.putAll(result.extractedVariables)
-                if (!isQuickSingleMode) {
-                    stepStatuses[result.stepId] = result.status
-                    stepResults[result.stepId] = result
-                    stepTableModel.fireTableDataChanged()
-                }
-                setRunningState(false)
-                displayStepResult(result, overwriteLog = false)
-                if (result.status == StepStatus.FAILED) {
-                    resultTabs.selectedIndex = RESULT_TAB_LOG
-                } else if (resultTabs.selectedIndex != RESULT_TAB_LOG) {
-                    resultTabs.selectedIndex = RESULT_TAB_RESPONSE
+                    if (finalError != null) {
+                        if (!isQuickSingleMode) {
+                            stepStatuses[activeStep.id] = StepStatus.FAILED
+                            refreshStepTablePreservingSelection(forceSelectRow = selectedRowBeforeRun, refreshEditor = false)
+                        }
+                        statusBadgeLabel.text = "ERROR"
+                        statusBadgeLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                        resultTabs.selectedIndex = RESULT_TAB_LOG
+                        return@invokeLater
+                    }
+
+                    if (finalResult != null) {
+                        lastRuntimeContext.putAll(finalResult.extractedVariables)
+                        if (!isQuickSingleMode) {
+                            stepStatuses[finalResult.stepId] = finalResult.status
+                            stepResults[finalResult.stepId] = finalResult
+                            refreshStepTablePreservingSelection(forceSelectRow = selectedRowBeforeRun, refreshEditor = false)
+                        }
+                        displayStepResult(finalResult, overwriteLog = false)
+                        if (finalResult.status == StepStatus.FAILED) {
+                            resultTabs.selectedIndex = RESULT_TAB_LOG
+                        } else if (resultTabs.selectedIndex != RESULT_TAB_LOG) {
+                            resultTabs.selectedIndex = RESULT_TAB_RESPONSE
+                        }
+                    }
                 }
             }
         }

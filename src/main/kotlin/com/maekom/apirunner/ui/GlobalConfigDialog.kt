@@ -11,7 +11,9 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.maekom.apirunner.engine.BulkJsonVariableParser
 import com.maekom.apirunner.i18n.I18nManager
+import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.CommonHeaderItem
 import com.maekom.apirunner.storage.ScenarioStorageService
 import java.awt.BorderLayout
@@ -42,9 +44,11 @@ enum class HeaderImportMode {
  * 2. Scenario Global Variables (legacy per-scenario vars)
  * 3. Local Secrets (.maekom/secrets.local.json)
  */
+// [v0.2.0] 시나리오 변수 탭 명칭 명확화 및 시나리오 변수·로컬 시크릿 탭에 JSON 일괄 입력(Bulk Import) 기능 추가
+// 변경 의도: 프로젝트 전역 변수와의 혼동을 없애고 JSON 붙여넣기로 시나리오 변수/로컬 시크릿을 대량 등록·병합 지원
 class GlobalConfigDialog(
     private val project: Project,
-    private val currentScenarioName: String,
+    private val currentScenario: ApiScenario,
     private val storage: ScenarioStorageService,
     initialCommonHeaders: List<CommonHeaderItem>,
     initialVariables: Map<String, String>,
@@ -120,7 +124,8 @@ class GlobalConfigDialog(
             buildTableTab(
                 table = variablesTable,
                 model = variablesModel,
-                hint = I18nManager.t("global.tab.vars.hint")
+                hint = I18nManager.t("global.tab.vars.hint"),
+                bulkTargetLabel = I18nManager.t("global.tab.vars")
             )
         )
         tabbedPane.addTab(
@@ -128,7 +133,8 @@ class GlobalConfigDialog(
             buildTableTab(
                 table = secretsTable,
                 model = secretsModel,
-                hint = I18nManager.t("global.tab.secrets.hint")
+                hint = I18nManager.t("global.tab.secrets.hint"),
+                bulkTargetLabel = I18nManager.t("global.tab.secrets")
             )
         )
 
@@ -180,7 +186,7 @@ class GlobalConfigDialog(
 
     private fun openImportFromScenarioDialog() {
         stopEditing(headersTable)
-        val otherScenarios = storage.listScenarios().filter { !it.equals(currentScenarioName, ignoreCase = true) }
+        val otherScenarios = storage.listScenarios().filter { !it.equals(currentScenario.name, ignoreCase = true) }
         if (otherScenarios.isEmpty()) {
             Messages.showInfoMessage(project, I18nManager.t("global.importHeaders.empty"), I18nManager.t("global.importHeaders.title"))
             return
@@ -227,14 +233,26 @@ class GlobalConfigDialog(
 
     fun getSecrets(): LinkedHashMap<String, String> = extractMap(secretsModel)
 
-    private fun buildTableTab(table: JBTable, model: DefaultTableModel, hint: String): JPanel {
+    private fun buildTableTab(
+        table: JBTable,
+        model: DefaultTableModel,
+        hint: String,
+        bulkTargetLabel: String
+    ): JPanel {
         val panel = JPanel(BorderLayout(0, 8))
         panel.border = JBUI.Borders.empty(8)
 
+        val topBar = JPanel(BorderLayout(8, 0))
         val hintLabel = JBLabel("<html>$hint</html>").apply {
             foreground = JBColor.GRAY
         }
-        panel.add(hintLabel, BorderLayout.NORTH)
+        val bulkImportBtn = JButton(I18nManager.t("bulk.btn")).apply {
+            addActionListener { openBulkImportForKeyValueTable(table, model, bulkTargetLabel) }
+        }
+        topBar.add(hintLabel, BorderLayout.CENTER)
+        topBar.add(bulkImportBtn, BorderLayout.EAST)
+
+        panel.add(topBar, BorderLayout.NORTH)
         panel.add(JBScrollPane(table), BorderLayout.CENTER)
 
         val btnBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
@@ -261,6 +279,31 @@ class GlobalConfigDialog(
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
+    }
+
+    // [v0.2.0] 시나리오 변수 / 로컬 시크릿 탭 JSON 일괄 입력 반영
+    private fun openBulkImportForKeyValueTable(
+        table: JBTable,
+        model: DefaultTableModel,
+        targetLabel: String
+    ) {
+        stopEditing(table)
+        val dialog = BulkJsonImportDialog(
+            project = project,
+            targetName = targetLabel,
+            globalVariablesProvider = { storage.loadGlobalVariables() },
+            scenarioProvider = { currentScenario },
+            isImportingIntoGlobalVars = false
+        )
+        if (!dialog.showAndGet()) return
+
+        val imported = dialog.getImportedItems()
+        val merged = BulkJsonVariableParser.mergeIntoMap(extractMap(model), imported, dialog.getSelectedMergeMode())
+        model.rowCount = 0
+        for ((k, v) in merged) {
+            model.addRow(arrayOf<Any>(k, v))
+        }
+        Messages.showInfoMessage(project, I18nManager.t("bulk.success", imported.size), targetLabel)
     }
 
     private fun createKeyValueModel(initial: Map<String, String>): DefaultTableModel {

@@ -9,11 +9,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.CommonHeaderItem
+import com.maekom.apirunner.model.EnvironmentConfig
+import com.maekom.apirunner.model.EnvironmentProfile
 import com.maekom.apirunner.model.GlobalVariableItem
 import java.io.File
 
-// [v0.1.3] 프로젝트 영속 전역 변수(.maekom/global-variables.json) 저장/로드 및 타 시나리오 공통 헤더 조회 지원 추가
-// 변경 의도: 시나리오 파일 전환 시에도 프로젝트 전역 변수가 유지되고, 다른 시나리오의 공통 헤더를 미리보기·병합/덮어쓰기할 수 있도록 지원
+// [v0.2.0] 프로젝트별 BaseURL 환경 프로필(.maekom/environments.json) 영속 로드/저장 추가
+// 변경 의도: Local(자동 포트 감지)과 DEV/STG/PRD 커스텀 환경 매핑이 시나리오 전환 시에도 초기화되지 않고 유지되도록 보장
 enum class RenameStatus {
     SUCCESS,
     ALREADY_EXISTS,
@@ -49,6 +51,8 @@ class ScenarioStorageService(private val project: Project) {
     fun getSecretsFile(): File = File(getMaekomDir(), "secrets.local.json")
 
     fun getGlobalVariablesFile(): File = File(getMaekomDir(), "global-variables.json")
+
+    fun getEnvironmentsFile(): File = File(getMaekomDir(), "environments.json")
 
     fun listScenarios(): List<String> {
         val dir = getScenariosDir()
@@ -173,6 +177,64 @@ class ScenarioStorageService(private val project: Project) {
         imported.name = uniqueName
         saveScenario(imported)
         return imported
+    }
+
+    // [v0.2.0] 프로젝트별 BaseURL 환경 프로필(.maekom/environments.json) 로드/저장
+    fun loadEnvironmentConfig(defaultLocalBaseUrl: String): EnvironmentConfig {
+        val file = getEnvironmentsFile()
+        val loaded = if (file.exists() && file.isFile) {
+            try {
+                mapper.readValue(file, EnvironmentConfig::class.java)
+            } catch (_: Exception) {
+                EnvironmentConfig()
+            }
+        } else {
+            EnvironmentConfig()
+        }
+
+        val cleanedProfiles = loaded.profiles
+            .filter { it.name.trim().isNotEmpty() }
+            .map { it.copy(name = it.name.trim()) }
+            .toMutableList()
+
+        val localIndex = cleanedProfiles.indexOfFirst { it.name.equals("Local", ignoreCase = true) }
+        if (localIndex < 0) {
+            cleanedProfiles.add(
+                0,
+                EnvironmentProfile(name = "Local", baseUrl = defaultLocalBaseUrl, builtInLocal = true)
+            )
+        } else {
+            val existingLocal = cleanedProfiles[localIndex]
+            cleanedProfiles[localIndex] = existingLocal.copy(
+                name = "Local",
+                baseUrl = existingLocal.baseUrl.ifBlank { defaultLocalBaseUrl },
+                builtInLocal = true
+            )
+            if (localIndex > 0) {
+                val moved = cleanedProfiles.removeAt(localIndex)
+                cleanedProfiles.add(0, moved)
+            }
+        }
+
+        val selected = loaded.selectedEnvironment.trim().takeIf { sel ->
+            cleanedProfiles.any { it.name.equals(sel, ignoreCase = true) }
+        } ?: "Local"
+
+        return EnvironmentConfig(
+            selectedEnvironment = cleanedProfiles.first { it.name.equals(selected, ignoreCase = true) }.name,
+            profiles = cleanedProfiles
+        )
+    }
+
+    fun saveEnvironmentConfig(config: EnvironmentConfig): File {
+        val dir = getMaekomDir()
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+        val file = getEnvironmentsFile()
+        mapper.writeValue(file, config)
+        refreshVfs(file)
+        return file
     }
 
     // [v0.1.3] 프로젝트 공용 전역 변수(.maekom/global-variables.json) 영속 로드/저장

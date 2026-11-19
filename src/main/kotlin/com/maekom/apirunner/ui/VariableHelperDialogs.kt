@@ -14,6 +14,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.maekom.apirunner.engine.BulkJsonVariableParser
 import com.maekom.apirunner.engine.JsonPathCandidate
 import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.engine.VariableResolver
@@ -167,10 +168,17 @@ class VariableCheatSheetDialog(
         val panel = JPanel(BorderLayout(0, 8))
         panel.border = JBUI.Borders.empty(8)
 
+        // [v0.2.0] 프로젝트 전역 변수 탭에 JSON 일괄 입력(Bulk Import) 버튼 추가
+        val topBar = JPanel(BorderLayout(8, 0))
         val hintLabel = JBLabel("<html>${I18nManager.t("vars.global.hint")}</html>").apply {
             foreground = JBColor.GRAY
         }
-        panel.add(hintLabel, BorderLayout.NORTH)
+        val bulkImportBtn = JButton(I18nManager.t("bulk.btn")).apply {
+            addActionListener { bulkImportGlobalVariables() }
+        }
+        topBar.add(hintLabel, BorderLayout.CENTER)
+        topBar.add(bulkImportBtn, BorderLayout.EAST)
+        panel.add(topBar, BorderLayout.NORTH)
 
         globalTable.apply {
             setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
@@ -237,6 +245,24 @@ class VariableCheatSheetDialog(
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
+    }
+
+    // [v0.2.0] 프로젝트 전역 변수 JSON 일괄 입력 및 .maekom/global-variables.json 영속 저장
+    private fun bulkImportGlobalVariables() {
+        val dialog = BulkJsonImportDialog(
+            project = project,
+            targetName = I18nManager.t("vars.tab.global"),
+            globalVariablesProvider = { globalItems },
+            scenarioProvider = currentScenarioProvider,
+            isImportingIntoGlobalVars = true
+        )
+        if (!dialog.showAndGet()) return
+
+        val imported = dialog.getImportedItems()
+        globalItems = BulkJsonVariableParser.mergeItems(globalItems, imported, dialog.getSelectedMergeMode())
+        persistGlobalVariables()
+        reloadGlobalRows()
+        feedbackLabel.text = I18nManager.t("bulk.success", imported.size)
     }
 
     private fun buildDynamicVariablesTab(): JPanel {

@@ -33,6 +33,29 @@ enum class ScenarioStatus {
     ABORTED
 }
 
+// [v0.2.0] BaseURL 환경 프로필(Local/DEV/STG/PRD) 영속 모델(EnvironmentProfile, EnvironmentConfig) 추가
+// 변경 의도: 시나리오를 전환해도 프로젝트별 환경(BaseURL) 매핑 설정이 유지되고 즉시 전환할 수 있도록 지원
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class EnvironmentProfile(
+    var name: String = "Local",
+    var baseUrl: String = "http://localhost:8080",
+    var builtInLocal: Boolean = false
+) {
+    fun deepCopy(): EnvironmentProfile = copy()
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class EnvironmentConfig(
+    var selectedEnvironment: String = "Local",
+    var profiles: MutableList<EnvironmentProfile> = mutableListOf()
+) {
+    fun deepCopy(): EnvironmentConfig = EnvironmentConfig(
+        selectedEnvironment = selectedEnvironment,
+        profiles = profiles.map { it.deepCopy() }.toMutableList()
+    )
+}
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class CommonHeaderItem(
     var enabled: Boolean = true,

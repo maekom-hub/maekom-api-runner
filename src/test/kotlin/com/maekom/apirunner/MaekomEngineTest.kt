@@ -2,6 +2,8 @@ package com.maekom.apirunner
 
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.maekom.apirunner.engine.BulkJsonVariableParser
+import com.maekom.apirunner.engine.BulkMergeMode
 import com.maekom.apirunner.engine.CurlExporter
 import com.maekom.apirunner.engine.HttpExecutor
 import com.maekom.apirunner.engine.JsonPathLocator
@@ -219,13 +221,17 @@ class MaekomEngineTest {
         assertEquals(PluginLanguage.KO, manager.language)
         assertEquals("저장", manager.translate("toolbar.save"))
         assertEquals("✎ 이름 변경", manager.translate("toolbar.rename"))
-        assertEquals("cURL 복사 ▾", manager.translate("toolbar.curl"))
+        assertEquals("cURL 복사", manager.translate("toolbar.curl"))
+        assertEquals("공통 헤더 관리", manager.translate("toolbar.globalConfig"))
+        assertEquals("변수 관리", manager.translate("toolbar.variables"))
         assertEquals("? 가이드", manager.translate("extract.guide"))
 
         assertEquals(PluginLanguage.EN, manager.toggleLanguage())
         assertEquals("Save", manager.translate("toolbar.save"))
         assertEquals("✎ Rename", manager.translate("toolbar.rename"))
-        assertEquals("Copy cURL ▾", manager.translate("toolbar.curl"))
+        assertEquals("Copy cURL", manager.translate("toolbar.curl"))
+        assertEquals("Common Headers", manager.translate("toolbar.globalConfig"))
+        assertEquals("Variables", manager.translate("toolbar.variables"))
         assertEquals("? Guide", manager.translate("extract.guide"))
 
         assertEquals(PluginLanguage.KO, manager.toggleLanguage())
@@ -467,5 +473,40 @@ class MaekomEngineTest {
         assertTrue(UpdateCheckerService.isNewerVersion("v1.0.0", "0.9.9"))
         assertFalse(UpdateCheckerService.isNewerVersion("0.1.2", "0.1.2"))
         assertFalse(UpdateCheckerService.isNewerVersion("0.1.1", "0.1.2"))
+    }
+
+    @Test
+    fun `bulk json variable parser supports object and array payloads with merge modes`() {
+        // 1. Key-Value JSON object format
+        val objResult = BulkJsonVariableParser.parse("""{"memberId":"1001","retries":3,"active":true}""")
+        assertTrue(objResult.isSuccess)
+        val objItems = objResult.getOrThrow()
+        assertEquals(3, objItems.size)
+        assertEquals("memberId", objItems[0].key)
+        assertEquals("1001", objItems[0].value)
+        assertEquals("3", objItems[1].value)
+        assertEquals("true", objItems[2].value)
+
+        // 2. JSON array format with enabled & secret flags
+        val arrResult = BulkJsonVariableParser.parse(
+            """[{"key":"apiKey","value":"sec-99","enabled":true,"secret":true},{"key":"debug","value":"0","enabled":false,"secret":false}]"""
+        )
+        assertTrue(arrResult.isSuccess)
+        val arrItems = arrResult.getOrThrow()
+        assertEquals(2, arrItems.size)
+        assertTrue(arrItems[0].secret)
+        assertFalse(arrItems[1].enabled)
+
+        // 3. Merge modes: OVERWRITE_EXISTING vs KEEP_EXISTING
+        val existing = listOf(GlobalVariableItem(true, "memberId", "old-id", false))
+        val overwritten = BulkJsonVariableParser.mergeItems(existing, objItems, BulkMergeMode.OVERWRITE_EXISTING)
+        assertEquals("1001", overwritten.first { it.key == "memberId" }.value)
+
+        val kept = BulkJsonVariableParser.mergeItems(existing, objItems, BulkMergeMode.KEEP_EXISTING)
+        assertEquals("old-id", kept.first { it.key == "memberId" }.value)
+        assertEquals(3, kept.size)
+
+        // 4. Invalid JSON rejected gracefully
+        assertTrue(BulkJsonVariableParser.parse("not-json").isFailure)
     }
 }
