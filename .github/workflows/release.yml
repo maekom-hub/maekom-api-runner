@@ -30,7 +30,7 @@ jobs:
       - name: Build IntelliJ Plugin
         run: ./gradlew buildPlugin
 
-      - name: Resolve version, archive filename, and Korean release notes
+      - name: Resolve version, archive filename, updatePlugins.xml, and Korean release notes
         id: release_meta
         shell: bash
         run: |
@@ -58,7 +58,22 @@ jobs:
 
           DOWNLOAD_URL="https://github.com/maekom-hub/maekom-api-runner/releases/download/${TAG_NAME}/${EXPECTED_ZIP}"
 
-          # Collect commit changes since previous tag
+          # plugin.xml에서 실제 플러그인 ID 자동 추출
+          PLUGIN_ID="$(grep -oP '(?<=<id>)[^<]+' src/main/resources/META-INF/plugin.xml | head -n 1 || echo "com.maekom.apirunner")"
+
+          # IntelliJ Custom Plugin Repository용 updatePlugins.xml 동적 생성
+          cat <<XML > updatePlugins.xml
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plugins>
+            <plugin id="${PLUGIN_ID}"
+                    url="${DOWNLOAD_URL}"
+                    version="${VERSION}">
+              <name>Maekom API Runner</name>
+            </plugin>
+          </plugins>
+          XML
+
+          # 직전 태그 이후 커밋 변경 내역 수집
           PREV_TAG="$(git tag --sort=-v:refname | grep -Fxv "$TAG_NAME" | head -n 1 || true)"
           if [[ -n "$PREV_TAG" ]]; then
             COMMIT_LOG="$(git log "${PREV_TAG}..${TAG_NAME}" --pretty=format:'- %s (`%h`)' || true)"
@@ -70,12 +85,13 @@ jobs:
             COMMIT_LOG="- Maekom API Runner ${TAG_NAME} 릴리즈"
           fi
 
-          cat <<EOF > release_notes.md
+          cat <<MD > release_notes.md
           ## 🌶️ Maekom API Runner ${TAG_NAME}
 
           ### 📦 직통 다운로드
           - **[${EXPECTED_ZIP} 바로 다운로드](${DOWNLOAD_URL})**
           - 직통 URL: \`${DOWNLOAD_URL}\`
+          - 자동 업데이트 저장소 URL: \`https://github.com/maekom-hub/maekom-api-runner/releases/latest/download/updatePlugins.xml\`
 
           ### 📝 주요 변경 내역
           ${COMMIT_LOG}
@@ -84,10 +100,11 @@ jobs:
           1. 위 링크에서 \`${EXPECTED_ZIP}\` 파일을 다운로드합니다.
           2. IntelliJ IDEA에서 **Settings / Preferences → Plugins → ⚙️ → Install Plugin from Disk...** 메뉴를 선택합니다.
           3. 다운로드한 \`${EXPECTED_ZIP}\` 파일을 선택한 뒤 적용하고 IDE를 재시작합니다.
+          4. 이후 버전부터는 IDE 내부 **Plugins** 탭에서 원클릭으로 자동 업데이트됩니다.
 
           ---
           📄 **License:** Apache License 2.0 (Copyright 2026 maekom-hub)
-          EOF
+          MD
 
           {
             echo "tag_name=${TAG_NAME}"
@@ -97,9 +114,11 @@ jobs:
             echo "download_url=${DOWNLOAD_URL}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release and upload plugin zip
+      - name: Create GitHub Release and upload plugin zip & updatePlugins.xml
         uses: softprops/action-gh-release@v2
         with:
           name: "Maekom API Runner ${{ steps.release_meta.outputs.tag_name }}"
           body_path: release_notes.md
-          files: ${{ steps.release_meta.outputs.zip_path }}
+          files: |
+            ${{ steps.release_meta.outputs.zip_path }}
+            updatePlugins.xml
