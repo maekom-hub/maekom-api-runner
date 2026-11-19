@@ -1,0 +1,30 @@
+<idea-plugin>
+    <id>com.maekom.apirunner</id>
+    <name>Maekom API Runner</name>
+    <vendor email="dev@maekom.io" url="https://github.com/maekom/maekom-api-runner">Maekom</vendor>
+
+    <description><![CDATA[
+    <b>Maekom API Runner</b> — Spring Boot API Scenario Runner &amp; PSI Auto-Sampler for IntelliJ IDEA.<br/>
+    <ul>
+      <li>🌶️ Gutter chili icon on Spring Web controller endpoints (<code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code>)</li>
+      <li>Auto-generates URLs, query strings, path variables, and pretty-printed JSON request bodies from DTOs &amp; Java records</li>
+      <li>Multi-step scenario chaining with Jayway JsonPath extraction, Fail-Fast policy, and local secret separation (<code>.maekom/secrets.local.json</code>)</li>
+      <li>3-pane bottom ToolWindow with instant cancellation and non-JSON response safety</li>
+    </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.lineMarkerProvider
+            language="JAVA"
+            implementationClass="com.maekom.apirunner.psi.SpringEndpointLineMarker"/>
+
+        <toolWindow
+            id="Maekom API"
+            anchor="bottom"
+            icon="/icons/chili.svg"
+            factoryClass="com.maekom.apirunner.ui.ScenarioToolWindowFactory"/>
+    </extensions>
+</idea-plugin>

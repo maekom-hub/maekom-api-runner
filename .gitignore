@@ -1,0 +1,14 @@
+.gradle/
+.intellijPlatform/
+build/
+.idea/
+*.iml
+out/
+.maekom/secrets.local.json
+manage.sh
+
+# OS & Logs
+.DS_Store
+*.log
+*.hprof
+.kotlin/
