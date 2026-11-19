@@ -60,6 +60,8 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.Point
 import java.awt.datatransfer.StringSelection
 import java.awt.event.ComponentAdapter
@@ -99,6 +101,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         private const val TAB_BODY = 1
         private const val TAB_HEADERS = 2
         private const val TAB_EXTRACT = 3
+        private const val RESULT_TAB_RESPONSE = 0
+        private const val RESULT_TAB_EXTRACTED = 1
+        private const val RESULT_TAB_LOG = 2
         private const val AUTO_SAVE_DEBOUNCE_MS = 30_000
         private val AUTO_SAVE_TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     }
@@ -223,8 +228,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val extractedHeaderLabel = JBLabel()
     private val responseHeaderLabel = JBLabel()
     private val extractFromResponseBtn = JButton()
+    private val clearLogBtn = JButton()
+    private val executionLogBuffer = StringBuilder()
 
-    private val extractedVarsModel = object : DefaultTableModel(arrayOf<Any>("추출 변수명", "값"), 0) {
+    // [v0.1.5] 추출 변수 전용 탭 테이블(변수명 | 추출된 값 | 복사 버튼) 3컬럼 구성
+    private val extractedVarsModel = object : DefaultTableModel(arrayOf<Any>("추출 변수명", "추출된 값", "복사"), 0) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
     private val extractedVarsTable = JBTable(extractedVarsModel)
@@ -312,7 +320,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 return comp
             }
         }
-        baseUrlField.preferredSize = Dimension(180, 28)
+        // [v0.1.4] BaseURL 입력창과 SSL 무시 체크박스는 요청 상세 편집 영역 1행으로 이동하여 상단 툴바를 정돈
         stopBtn.isEnabled = false
 
         scenarioManageBtn.margin = JBUI.insets(2, 7)
@@ -333,9 +341,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.add(globalConfigBtn)
         topToolbarPanel.add(variablesHelpBtn)
         topToolbarPanel.add(curlCopyBtn)
-        topToolbarPanel.add(baseUrlLabel)
-        topToolbarPanel.add(baseUrlField)
-        topToolbarPanel.add(ignoreSslCheckbox)
         topToolbarPanel.add(runAllBtn)
         topToolbarPanel.add(stopBtn)
         topToolbarPanel.add(updateCheckBtn)
@@ -415,7 +420,37 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        val topBar = JPanel(BorderLayout(6, 4))
+        // [v0.1.4] BaseURL 및 SSL 무시 체크박스를 HTTP Method / 요청 URL 바 바로 위(1행)로 재배치
+        // 변경 의도: 요청 대상 호스트와 경로를 시각적으로 한 흐름으로 묶고, GridBagLayout 가중치로 창 축소 시 찌그러짐 방지
+        val baseUrlBar = JPanel(GridBagLayout())
+        baseUrlField.minimumSize = Dimension(120, 28)
+        baseUrlField.preferredSize = Dimension(260, 28)
+        baseUrlBar.add(
+            baseUrlLabel,
+            GridBagConstraints().apply {
+                gridx = 0; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insetsRight(6)
+            }
+        )
+        baseUrlBar.add(
+            baseUrlField,
+            GridBagConstraints().apply {
+                gridx = 1; gridy = 0; weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                anchor = GridBagConstraints.WEST
+            }
+        )
+        baseUrlBar.add(
+            ignoreSslCheckbox,
+            GridBagConstraints().apply {
+                gridx = 2; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsLeft(8)
+            }
+        )
+
+        val requestLineBar = JPanel(BorderLayout(6, 4))
         methodComboBox.preferredSize = Dimension(88, 28)
 
         val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
@@ -424,11 +459,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         rightControls.add(expectedStatusField)
         rightControls.add(runSingleBtn)
 
-        topBar.add(methodComboBox, BorderLayout.WEST)
-        topBar.add(urlField, BorderLayout.CENTER)
-        topBar.add(rightControls, BorderLayout.EAST)
+        requestLineBar.add(methodComboBox, BorderLayout.WEST)
+        requestLineBar.add(urlField, BorderLayout.CENTER)
+        requestLineBar.add(rightControls, BorderLayout.EAST)
 
-        panel.add(topBar, BorderLayout.NORTH)
+        val requestHeaderContainer = JPanel(BorderLayout(0, 4)).apply {
+            add(baseUrlBar, BorderLayout.NORTH)
+            add(requestLineBar, BorderLayout.SOUTH)
+        }
+
+        panel.add(requestHeaderContainer, BorderLayout.NORTH)
 
         // Tab 0: Params ([Checkbox] | [Key] | [Value] | [Description])
         paramsTable.apply {
@@ -523,25 +563,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         summaryBar.add(scenarioStatusLabel)
         panel.add(summaryBar, BorderLayout.NORTH)
 
-        // [v0.1.3] 추출된 변수 목록이 창 축소·스플릿 조절 시 납작하게 가려지지 않도록
-        //          스크롤 영역 최소 높이(88px) 및 JSplitPane resizeWeight/최소 크기 제약 보장
-        extractedVarsTable.rowHeight = 22
-        extractedVarsTable.tableHeader.reorderingAllowed = false
-        extractedHeaderLabel.apply {
-            font = font.deriveFont(Font.BOLD)
-            border = JBUI.Borders.empty(2, 4)
-        }
-        val extractedScrollPane = JBScrollPane(extractedVarsTable).apply {
-            minimumSize = Dimension(120, 88)
-            preferredSize = Dimension(200, 110)
-        }
-        val extractedPanel = JPanel(BorderLayout()).apply {
-            minimumSize = Dimension(120, 114)
-            preferredSize = Dimension(200, 136)
-            add(extractedHeaderLabel, BorderLayout.NORTH)
-            add(extractedScrollPane, BorderLayout.CENTER)
-        }
+        // [v0.1.5] 우측 결과 패널을 3개 독립 탭(응답 / 추출 변수 / 실행 및 에러 로그)으로 분리
+        // 변경 의도: 응답 본문을 100% 전체 높이로 넓게 표시하고, 추출 변수(개수 배지)와 실시간 실행 로그를 전용 탭으로 분리
 
+        // Tab 0: 응답 (Response — 100% full height)
         responseHeaderLabel.apply {
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4)
@@ -553,23 +578,79 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         responseTopBar.add(extractFromResponseBtn)
 
         val responsePanel = JPanel(BorderLayout()).apply {
-            minimumSize = Dimension(120, 100)
             add(responseTopBar, BorderLayout.NORTH)
             add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
         }
 
-        val resultSplitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, extractedPanel, responsePanel).apply {
-            resizeWeight = 0.28
-            dividerLocation = 136
-            dividerSize = 5
-            isContinuousLayout = true
-            border = JBUI.Borders.empty()
+        // Tab 1: 추출 변수 (Extracted Variables — dedicated tab with Copy button)
+        extractedVarsTable.apply {
+            rowHeight = 25
+            tableHeader.reorderingAllowed = false
+            setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+            columnModel.getColumn(0).preferredWidth = 160
+            columnModel.getColumn(1).preferredWidth = 240
+            columnModel.getColumn(2).apply {
+                maxWidth = 72
+                minWidth = 56
+                preferredWidth = 64
+                cellRenderer = object : DefaultTableCellRenderer() {
+                    init { horizontalAlignment = SwingConstants.CENTER }
+                    override fun getTableCellRendererComponent(
+                        table: JTable?,
+                        value: Any?,
+                        isSelected: Boolean,
+                        hasFocus: Boolean,
+                        row: Int,
+                        column: Int
+                    ): Component {
+                        super.getTableCellRendererComponent(table, "[ ${value ?: ""} ]", isSelected, hasFocus, row, column)
+                        font = font.deriveFont(Font.BOLD)
+                        if (!isSelected) {
+                            foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                        }
+                        return this
+                    }
+                }
+            }
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    val row = rowAtPoint(e.point)
+                    val col = columnAtPoint(e.point)
+                    if (row < 0) return
+                    if (col == 2 || e.clickCount == 2) {
+                        val varName = extractedVarsModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
+                        if (varName.isNotEmpty()) {
+                            val token = "{{$varName}}"
+                            CopyPasteManager.getInstance().setContents(StringSelection(token))
+                            showBalloon(extractedVarsTable, I18nManager.t("vars.copiedMsg", token), MessageType.INFO)
+                        }
+                    }
+                }
+            })
+        }
+        extractedHeaderLabel.apply {
+            font = font.deriveFont(Font.BOLD)
+            border = JBUI.Borders.empty(2, 4)
+        }
+        val extractedPanel = JPanel(BorderLayout()).apply {
+            add(extractedHeaderLabel, BorderLayout.NORTH)
+            add(JBScrollPane(extractedVarsTable), BorderLayout.CENTER)
         }
 
-        val logScroll = JBScrollPane(detailLogArea)
+        // Tab 2: 실행 및 에러 로그 (Execution & Error Logs + Clear Log button)
+        clearLogBtn.margin = JBUI.insets(2, 7)
+        clearLogBtn.addActionListener { clearExecutionLog() }
+        val logTopBar = createWrapBar()
+        logTopBar.add(clearLogBtn)
 
-        resultTabs.addTab("응답 / 추출 변수", resultSplitter)
-        resultTabs.addTab("실행 및 에러 로그", logScroll)
+        val logPanel = JPanel(BorderLayout()).apply {
+            add(logTopBar, BorderLayout.NORTH)
+            add(JBScrollPane(detailLogArea), BorderLayout.CENTER)
+        }
+
+        resultTabs.addTab("응답", responsePanel)
+        resultTabs.addTab("추출 변수", extractedPanel)
+        resultTabs.addTab("실행 및 에러 로그", logPanel)
 
         panel.add(resultTabs, BorderLayout.CENTER)
         return panel
@@ -817,6 +898,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun installContextMenus() {
         val varsProvider: () -> List<ScenarioVariableItem> = { collectAllVariablesForMenus() }
 
+        VariableContextMenuSupport.installOnTextComponent(baseUrlField, varsProvider)
         VariableContextMenuSupport.installOnTextComponent(urlField, varsProvider)
         VariableContextMenuSupport.installOnTextComponent(bodyTextArea, varsProvider)
         VariableContextMenuSupport.installOnTableValueColumn(
@@ -1331,8 +1413,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         resultStatusTitleLabel.text = I18nManager.t("result.statusLabel")
         resultDurationTitleLabel.text = I18nManager.t("result.durationLabel")
-        resultTabs.setTitleAt(0, I18nManager.t("result.tab.response"))
-        resultTabs.setTitleAt(1, I18nManager.t("result.tab.log"))
+        resultTabs.setTitleAt(RESULT_TAB_RESPONSE, I18nManager.t("result.tab.response"))
+        updateExtractedVarsTabTitle()
+        resultTabs.setTitleAt(RESULT_TAB_LOG, I18nManager.t("result.tab.log"))
+        clearLogBtn.text = I18nManager.t("result.log.clear")
         extractedHeaderLabel.text = I18nManager.t("result.extractedHeader")
         responseHeaderLabel.text = I18nManager.t("result.responseHeader")
         extractFromResponseBtn.text = I18nManager.t("result.extractFromResponse")
@@ -1340,7 +1424,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         updateTableHeaders(
             extractedVarsTable,
             I18nManager.t("result.extractedCol.name"),
-            I18nManager.t("result.extractedCol.value")
+            I18nManager.t("result.extractedCol.value"),
+            I18nManager.t("result.extractedCol.copy")
         )
 
         if (lastDisplayedResult != null) {
@@ -1362,6 +1447,40 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.revalidate()
         revalidate()
         repaint()
+    }
+
+    private fun updateExtractedVarsTabTitle() {
+        val count = extractedVarsModel.rowCount
+        val title = if (count > 0) {
+            I18nManager.t("result.tab.extractedCount", count)
+        } else {
+            I18nManager.t("result.tab.extracted")
+        }
+        if (resultTabs.tabCount > RESULT_TAB_EXTRACTED) {
+            resultTabs.setTitleAt(RESULT_TAB_EXTRACTED, title)
+        }
+    }
+
+    // [v0.1.5] 실행 및 에러 로그 탭이 이미 열려 있을 때도 즉시 텍스트 갱신 및 최하단 자동 스크롤 보장
+    private fun clearExecutionLog() {
+        executionLogBuffer.setLength(0)
+        ApplicationManager.getApplication().invokeLater {
+            detailLogArea.text = ""
+            detailLogArea.caretPosition = 0
+            detailLogArea.revalidate()
+            detailLogArea.repaint()
+        }
+    }
+
+    private fun appendExecutionLog(chunk: String) {
+        executionLogBuffer.append(chunk)
+        val snapshot = executionLogBuffer.toString()
+        ApplicationManager.getApplication().invokeLater {
+            detailLogArea.text = snapshot
+            detailLogArea.caretPosition = detailLogArea.document.length
+            detailLogArea.revalidate()
+            detailLogArea.repaint()
+        }
     }
 
     private fun updateTableHeaders(table: JBTable, vararg titles: String) {
@@ -2070,6 +2189,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioStatusLabel.text = I18nManager.t("status.scenarioRunning")
         scenarioStatusLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
+        // [v0.1.5] 시나리오 실행 시작 시 로그 즉시 초기화 및 시작 배너 출력 (로그 탭이 이미 열려 있어도 즉시 갱신)
+        clearExecutionLog()
+        appendExecutionLog("=== ▶ Scenario Run: ${scenarioSnapshot.name} (${scenarioSnapshot.steps.size} steps) ===\n")
+
         ApplicationManager.getApplication().executeOnPooledThread {
             scenarioRunner.runScenario(
                 scenario = scenarioSnapshot,
@@ -2077,6 +2200,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 projectGlobalVariables = projectGlobals,
                 listener = object : ScenarioRunListener {
                     override fun onStepStarted(stepIndex: Int, step: ApiStep) {
+                        appendExecutionLog("\n[Step #${stepIndex + 1}] ▶ ${step.method.uppercase()} ${step.url} ...\n")
                         ApplicationManager.getApplication().invokeLater {
                             stepStatuses[step.id] = StepStatus.RUNNING
                             stepTableModel.fireTableDataChanged()
@@ -2087,6 +2211,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     }
 
                     override fun onStepCompleted(result: StepExecutionResult) {
+                        appendExecutionLog(buildDetailLog(result) + "\n")
                         ApplicationManager.getApplication().invokeLater {
                             stepStatuses[result.stepId] = result.status
                             stepResults[result.stepId] = result
@@ -2096,12 +2221,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                                 if (result.status == StepStatus.FAILED) {
                                     selectStepRow(result.stepIndex)
                                 }
-                                displayStepResult(result)
+                                displayStepResult(result, overwriteLog = false)
                             }
                         }
                     }
 
                     override fun onScenarioCompleted(summary: ScenarioExecutionSummary) {
+                        appendExecutionLog("=== ■ Scenario Finished: ${summary.scenarioStatus} (${summary.totalDurationMs} ms) ===\n")
                         ApplicationManager.getApplication().invokeLater {
                             lastRuntimeContext.clear()
                             lastRuntimeContext.putAll(summary.finalContext)
@@ -2118,8 +2244,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                                     val failedResult = summary.stepResults.firstOrNull { it.status == StepStatus.FAILED }
                                     if (failedResult != null) {
                                         selectStepRow(failedResult.stepIndex)
-                                        displayStepResult(failedResult)
-                                        resultTabs.selectedIndex = 1
+                                        displayStepResult(failedResult, overwriteLog = false)
+                                        resultTabs.selectedIndex = RESULT_TAB_LOG
                                     }
                                 }
                                 else -> {
@@ -2158,6 +2284,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         statusBadgeLabel.text = I18nManager.t("result.singleRunning")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
 
+        // [v0.1.5] 단건 실행 시작 시에도 로그 버퍼 초기화 및 즉시 화면 갱신
+        clearExecutionLog()
+        appendExecutionLog("=== ▶ Single Step Run: ${stepSnapshot.method.uppercase()} ${stepSnapshot.url} ===\n")
+
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = scenarioRunner.runSingleStep(
                 step = stepSnapshot,
@@ -2168,6 +2298,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 projectGlobalVariables = projectGlobals
             )
 
+            appendExecutionLog(buildDetailLog(result) + "\n")
             ApplicationManager.getApplication().invokeLater {
                 lastRuntimeContext.putAll(result.extractedVariables)
                 if (!isQuickSingleMode) {
@@ -2176,11 +2307,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     stepTableModel.fireTableDataChanged()
                 }
                 setRunningState(false)
-                displayStepResult(result)
+                displayStepResult(result, overwriteLog = false)
                 if (result.status == StepStatus.FAILED) {
-                    resultTabs.selectedIndex = 1
-                } else {
-                    resultTabs.selectedIndex = 0
+                    resultTabs.selectedIndex = RESULT_TAB_LOG
+                } else if (resultTabs.selectedIndex != RESULT_TAB_LOG) {
+                    resultTabs.selectedIndex = RESULT_TAB_RESPONSE
                 }
             }
         }
@@ -2204,7 +2335,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     // --- Result Rendering ---
 
-    private fun displayStepResult(result: StepExecutionResult?) {
+    private fun displayStepResult(result: StepExecutionResult?, overwriteLog: Boolean = true) {
         lastDisplayedResult = result
         extractedVarsModel.rowCount = 0
 
@@ -2213,7 +2344,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             statusBadgeLabel.foreground = JBColor.GRAY
             durationLabel.text = "0 ms"
             responseBodyArea.text = ""
-            detailLogArea.text = ""
+            if (overwriteLog) {
+                detailLogArea.text = ""
+            }
+            updateExtractedVarsTabTitle()
             return
         }
 
@@ -2240,9 +2374,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             durationLabel.text = "${resp?.durationMs ?: 0} ms"
         }
 
+        val copyLabel = I18nManager.t("vars.copyBtn")
         for ((k, v) in result.extractedVariables) {
-            extractedVarsModel.addRow(arrayOf<Any>(k, v))
+            extractedVarsModel.addRow(arrayOf<Any>(k, v, copyLabel))
         }
+        updateExtractedVarsTabTitle()
 
         responseBodyArea.text = when {
             resp != null && resp.formattedBody.isNotEmpty() -> resp.formattedBody
@@ -2252,8 +2388,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         responseBodyArea.caretPosition = 0
 
-        detailLogArea.text = buildDetailLog(result)
-        detailLogArea.caretPosition = 0
+        if (overwriteLog) {
+            detailLogArea.text = buildDetailLog(result)
+            detailLogArea.caretPosition = detailLogArea.document.length
+            detailLogArea.revalidate()
+            detailLogArea.repaint()
+        }
     }
 
     private fun buildDetailLog(result: StepExecutionResult): String = buildString {
