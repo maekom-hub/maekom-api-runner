@@ -5,14 +5,16 @@
 
     <description><![CDATA[
     <b>Maekom API Runner</b> — Open-source (Apache License 2.0) Spring Boot API Scenario Runner &amp; PSI Auto-Sampler for IntelliJ IDEA.<br/>
+    <i>Spring Boot 개발자를 위한 오픈소스 IntelliJ IDEA API 시나리오 러너 및 PSI 자동 샘플러 플러그인</i><br/><br/>
+    <b>Key Features / 주요 기능:</b>
     <ul>
-      <li>🌶️ Gutter chili icon on Spring Web controller endpoints (<code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code>)</li>
-      <li>Auto-extracts <code>@RequestParam</code>, <code>@ModelAttribute</code> &amp; POJO/record fields into a dedicated <b>Params</b> tab with Javadoc/<code>@Schema</code>/<code>@Parameter</code> descriptions, and generates JSON samples from <code>@RequestBody</code> DTOs &amp; records</li>
-      <li>Consolidated <b>Scenario Management</b> (New, Rename, Duplicate, Delete), <b>Import Common Headers</b> (Merge/Overwrite preview from other scenarios), 30-second debounced <b>Smart Auto-Save</b>, and dirty-check confirmation</li>
-      <li>Unified 3-tab <b>Variables Hub</b> (<code>{{$}}</code>) with persistent project-wide <b>Global Variables</b> (<code>.maekom/global-variables.json</code> with Secret masking), 8 built-in live dynamic variables, right-click insertion, and automatic <b>Variable Name Duplicate Validation</b> with smart recommendations</li>
-      <li>Multi-step scenario chaining with Jayway JsonPath extraction, built-in <b>Extract Guide</b>, one-click <b>Response JSON field extraction</b>, Fail-Fast policy, <b>Copy as cURL</b> (single step &amp; full scenario), responsive toolbars, <b>KO / EN</b> switch, and instant <b>Plugin Update Checker &amp; Notifications</b></li>
+      <li>🌶️ <b>Spring Controller Gutter Marker:</b> One-click chili icon on <code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code> (컨트롤러 메서드 옆 고추 아이콘으로 단건 실행 및 시나리오 스텝 추가)</li>
+      <li>🤖 <b>Auto-Sampler &amp; Params Tab:</b> Extracts <code>@RequestParam</code>, <code>@ModelAttribute</code> &amp; POJO/record fields with Javadoc/<code>@Schema</code>/<code>@Parameter</code> descriptions, and generates JSON samples from <code>@RequestBody</code> DTOs/records (DTO/record 자동 추출 및 JSON 샘플 자동 생성)</li>
+      <li>🗂️ <b>Scenario Management &amp; Smart Auto-Save:</b> New/Rename/Duplicate/Delete menu, Import Common Headers (Merge/Overwrite preview), dirty-check confirmation, and 30-second debounced Auto-Save (시나리오 통합 관리, 타 시나리오 공통 헤더 가져오기, 30초 스마트 자동 저장)</li>
+      <li>🌐 <b>3-Tab Variables Hub &amp; Duplicate Validator:</b> Persistent Global Variables (<code>.maekom/global-variables.json</code>, Secret masking), 8 live KST/UTC/UUID dynamic variables (<code>{{$kstNow}}</code>, <code>{{$kstCompact}}</code>, <code>{{$isoTimestamp}}</code>, <code>{{$uuid}}</code>), right-click insertion, and automatic duplicate name recommendations (전역 변수 CRUD, 동적 변수 치트시트/우클릭 삽입, 변수명 중복 검증·추천)</li>
+      <li>🔗 <b>Chaining, cURL &amp; Auto Updates:</b> One-click Response JSON JsonPath extraction, Fail-Fast policy, Copy as cURL (step &amp; full scenario), built-in <b>KO / EN</b> switch, and instant plugin update notifications (응답 본문 원클릭 JsonPath 추출, cURL 복사, KO/EN 전환 및 새 버전 즉시 알림)</li>
     </ul>
-    <p><b>License:</b> Apache License, Version 2.0 (Open Source — <a href="https://github.com/maekom-hub/maekom-api-runner">maekom-hub/maekom-api-runner</a>)</p>
+    <p><b>License:</b> Apache License, Version 2.0 (<a href="https://github.com/maekom-hub/maekom-api-runner">maekom-hub/maekom-api-runner</a>)</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

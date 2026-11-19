@@ -71,11 +71,14 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListCellRenderer
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
+import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -272,7 +275,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             secondComponent = buildRightResultPane()
         }
 
-        val mainSplitter = OnePixelSplitter(false, 0.24f).apply {
+        val mainSplitter = OnePixelSplitter(false, 0.28f).apply {
             firstComponent = buildLeftStepListPane()
             secondComponent = centerRightSplitter
         }
@@ -291,8 +294,25 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun buildTopToolbar(): JPanel {
         topToolbarPanel.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
 
-        scenarioComboBox.preferredSize = Dimension(145, 28)
-        baseUrlField.preferredSize = Dimension(170, 28)
+        // [v0.1.3] 긴 시나리오명이 잘리지 않도록 시나리오 ComboBox 최소/선호 폭 확장 및 항목별 툴팁 동기화
+        // 변경 의도: 상단 툴바에서 긴 시나리오 이름을 온전히 확인하고 마우스 오버 시 전체 이름을 표시
+        scenarioComboBox.minimumSize = Dimension(240, 28)
+        scenarioComboBox.preferredSize = Dimension(280, 28)
+        scenarioComboBox.maximumSize = Dimension(420, 28)
+        scenarioComboBox.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                val comp = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                toolTipText = value?.toString()
+                return comp
+            }
+        }
+        baseUrlField.preferredSize = Dimension(180, 28)
         stopBtn.isEnabled = false
 
         scenarioManageBtn.margin = JBUI.insets(2, 7)
@@ -345,23 +365,32 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         panel.add(stepsHeaderLabel, BorderLayout.NORTH)
 
+        // [v0.1.3] 실행 스텝 목록의 상태(Status) 컬럼 폭 축소 및 글자 잘림(...) 방지를 위해
+        //          AUTO_RESIZE_LAST_COLUMN 정책과 상태 컬럼 최소/선호 폭(96px/106px) 확보
         stepTable.apply {
             setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
             setShowGrid(false)
             rowHeight = 26
+            autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
             tableHeader.reorderingAllowed = false
             columnModel.getColumn(0).apply {
-                maxWidth = 30
+                maxWidth = 32
                 minWidth = 28
                 preferredWidth = 28
+                resizable = false
             }
             columnModel.getColumn(1).apply {
-                maxWidth = 44
-                minWidth = 34
-                preferredWidth = 38
+                minWidth = 96
+                preferredWidth = 106
+                maxWidth = 140
+                resizable = true
                 cellRenderer = StatusIconCellRenderer()
             }
-            columnModel.getColumn(2).cellRenderer = MethodPathCellRenderer()
+            columnModel.getColumn(2).apply {
+                minWidth = 120
+                preferredWidth = 200
+                cellRenderer = MethodPathCellRenderer()
+            }
         }
         panel.add(JBScrollPane(stepTable), BorderLayout.CENTER)
 
@@ -494,15 +523,24 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         summaryBar.add(scenarioStatusLabel)
         panel.add(summaryBar, BorderLayout.NORTH)
 
+        // [v0.1.3] 추출된 변수 목록이 창 축소·스플릿 조절 시 납작하게 가려지지 않도록
+        //          스크롤 영역 최소 높이(88px) 및 JSplitPane resizeWeight/최소 크기 제약 보장
         extractedVarsTable.rowHeight = 22
         extractedVarsTable.tableHeader.reorderingAllowed = false
         extractedHeaderLabel.apply {
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4)
         }
-        val extractedPanel = JPanel(BorderLayout())
-        extractedPanel.add(extractedHeaderLabel, BorderLayout.NORTH)
-        extractedPanel.add(JBScrollPane(extractedVarsTable), BorderLayout.CENTER)
+        val extractedScrollPane = JBScrollPane(extractedVarsTable).apply {
+            minimumSize = Dimension(120, 88)
+            preferredSize = Dimension(200, 110)
+        }
+        val extractedPanel = JPanel(BorderLayout()).apply {
+            minimumSize = Dimension(120, 114)
+            preferredSize = Dimension(200, 136)
+            add(extractedHeaderLabel, BorderLayout.NORTH)
+            add(extractedScrollPane, BorderLayout.CENTER)
+        }
 
         responseHeaderLabel.apply {
             font = font.deriveFont(Font.BOLD)
@@ -514,13 +552,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         responseTopBar.add(responseHeaderLabel)
         responseTopBar.add(extractFromResponseBtn)
 
-        val responsePanel = JPanel(BorderLayout())
-        responsePanel.add(responseTopBar, BorderLayout.NORTH)
-        responsePanel.add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
+        val responsePanel = JPanel(BorderLayout()).apply {
+            minimumSize = Dimension(120, 100)
+            add(responseTopBar, BorderLayout.NORTH)
+            add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
+        }
 
-        val resultSplitter = OnePixelSplitter(true, 0.26f).apply {
-            firstComponent = extractedPanel
-            secondComponent = responsePanel
+        val resultSplitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, extractedPanel, responsePanel).apply {
+            resizeWeight = 0.28
+            dividerLocation = 136
+            dividerSize = 5
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
         }
 
         val logScroll = JBScrollPane(detailLogArea)
@@ -1474,6 +1517,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
+        syncScenarioComboTooltip(currentScenario.name)
         lastAutoSavedTime = null
         markScenarioClean()
         scenarioStatusLabel.text = ""
@@ -1573,6 +1617,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
+        syncScenarioComboTooltip(currentScenario.name)
         displayStepResult(null)
         markScenarioClean()
         scenarioStatusLabel.text = ""
@@ -1764,6 +1809,16 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } finally {
             isUpdatingUi = false
         }
+        syncScenarioComboTooltip(selectedName)
+    }
+
+    // [v0.1.3] 시나리오 선택 ComboBox 툴팁 및 동적 선호 폭 동기화 (긴 시나리오명 전체 가시성 확보)
+    private fun syncScenarioComboTooltip(selectedName: String?) {
+        val label = selectedName?.trim().orEmpty()
+        scenarioComboBox.toolTipText = label.ifEmpty { null }
+        val estimatedWidth = (label.length * 9 + 56).coerceIn(260, 380)
+        scenarioComboBox.preferredSize = Dimension(estimatedWidth, 28)
+        topToolbarPanel.revalidate()
     }
 
     // --- Step List Actions ---
@@ -2269,7 +2324,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         override fun getColumnClass(columnIndex: Int): Class<*> = when (columnIndex) {
             0 -> java.lang.Boolean::class.java
-            1 -> StepStatus::class.java
+            1 -> ApiStep::class.java
             else -> ApiStep::class.java
         }
 
@@ -2279,7 +2334,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             val step = currentScenario.steps[rowIndex]
             return when (columnIndex) {
                 0 -> step.enabled
-                1 -> stepStatuses[step.id] ?: StepStatus.PENDING
+                1 -> step
                 else -> step
             }
         }
@@ -2293,9 +2348,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    private class StatusIconCellRenderer : DefaultTableCellRenderer() {
+    // [v0.1.3] 상태 아이콘과 함께 HTTP 상태 코드(예: 200 OK) 또는 다국어 상태 문구(대기/실행 중/실패/스킵)를 온전히 표기
+    private inner class StatusIconCellRenderer : DefaultTableCellRenderer() {
         init {
-            horizontalAlignment = SwingConstants.CENTER
+            horizontalAlignment = SwingConstants.LEFT
         }
 
         override fun getTableCellRendererComponent(
@@ -2306,10 +2362,29 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             row: Int,
             column: Int
         ): Component {
-            super.getTableCellRendererComponent(table, "", isSelected, hasFocus, row, column)
-            val status = value as? StepStatus ?: StepStatus.PENDING
+            val step = value as? ApiStep
+            val status = step?.let { stepStatuses[it.id] } ?: StepStatus.PENDING
+            val httpCode = step?.let { stepResults[it.id]?.response?.statusCode }
+            val labelText = when (status) {
+                StepStatus.PENDING -> I18nManager.t("steps.status.pending")
+                StepStatus.RUNNING -> I18nManager.t("steps.status.running")
+                StepStatus.SUCCESS -> if (httpCode != null) "$httpCode OK" else I18nManager.t("steps.status.success")
+                StepStatus.FAILED -> if (httpCode != null) "$httpCode ${I18nManager.t("steps.status.failed")}" else I18nManager.t("steps.status.failed")
+                StepStatus.SKIPPED -> I18nManager.t("steps.status.skipped")
+            }
+
+            super.getTableCellRendererComponent(table, labelText, isSelected, hasFocus, row, column)
             icon = statusToIcon(status)
-            toolTipText = status.name
+            iconTextGap = 5
+            if (!isSelected) {
+                foreground = when (status) {
+                    StepStatus.SUCCESS -> JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                    StepStatus.FAILED -> JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+                    StepStatus.RUNNING -> JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+                    else -> JBColor.GRAY
+                }
+            }
+            toolTipText = labelText
             return this
         }
 
