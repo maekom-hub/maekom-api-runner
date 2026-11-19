@@ -40,7 +40,6 @@ import com.maekom.apirunner.engine.ScenarioRunner
 import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
-import com.maekom.apirunner.icons.MaekomIcons
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
 import com.maekom.apirunner.model.EnvironmentConfig
@@ -75,11 +74,11 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.BorderFactory
-import javax.swing.Box
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -88,6 +87,7 @@ import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.event.TableModelEvent
@@ -95,9 +95,9 @@ import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.1.3] 시나리오 관리 드롭다운 통합, 30초 디바운스 스마트 자동 저장(Alarm), 프로젝트 전역 변수 3탭 허브,
-//          변수명 중복 검증기 연동, 상단 업데이트 확인/새 버전 배지 버튼 통합
-// 변경 의도: 툴바를 정돈하고 작업 유실·변수명 충돌·업데이트 캐싱 지연을 근본적으로 해소
+// [v0.2.2] 중복 생성된 커스텀 'Maekom API' 헤더 행을 제거하고, 업데이트 확인·한/영 세그먼트 스위치·실행/저장 상태 표시줄을
+//          IntelliJ 네이티브 ToolWindow 타이틀 바(setTabActions / setTitleActions)에 직접 주입할 수 있도록 전용 컴포넌트 제공
+// 변경 의도: 불필요한 2번째 헤더 줄을 없애 세로 작업 공간을 넓히고 IntelliJ 네이티브 ToolWindow UI와 완벽하게 일체화
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     companion object {
@@ -139,9 +139,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val stepResults = mutableMapOf<String, StepExecutionResult>()
     private val lastRuntimeContext = linkedMapOf<String, String>()
 
-    // --- Top Title Header Bar (v0.2.1: 좌측 Maekom API + 업데이트 + 한/영 세그먼트 스위치 | 우측 상태/소요/저장 상태) ---
-    private val topHeaderBarPanel = JPanel(BorderLayout(8, 0))
-    private val appTitleLabel = JBLabel("Maekom API", MaekomIcons.Chili, SwingConstants.LEFT)
+    // --- Native ToolWindow Title Bar Components (v0.2.2) ---
+    // 좌측(Maekom API 타이틀 바로 옆 setTabActions): [업데이트 확인] + [한국어 | English] 세그먼트 스위치
+    // 우측(⋮ / — 아이콘 바로 왼쪽 setTitleActions): 상태: 200 OK | 소요: 0 ms | 저장 상태
+    private val nativeLeftHeaderPanel = JPanel(GridBagLayout())
+    private val nativeRightStatusPanel = JPanel(GridBagLayout())
     private val updateCheckBtn = JButton()
     private val languageSegmentSwitch = LanguageSegmentSwitch(I18nManager.getInstance().language) { chosen ->
         if (!isUpdatingUi) {
@@ -291,13 +293,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun buildLayout() {
-        // [v0.2.1] 최상단 타이틀 헤더 바 → 글로벌 툴바 → 임시 단건 배너 3단 상단 구조 구성
+        // [v0.2.2] 커스텀 중복 헤더 행을 제거하고 네이티브 ToolWindow 타이틀 바 전용 컴포넌트를 초기화.
+        //          컨텐츠 영역은 곧바로 '시나리오: [ComboBox]' 글로벌 툴바부터 시작한다.
+        buildNativeHeaderComponents()
+
         val northContainer = JPanel(BorderLayout())
-        val topBarsStack = JPanel(BorderLayout()).apply {
-            add(buildTopHeaderBar(), BorderLayout.NORTH)
-            add(buildTopToolbar(), BorderLayout.SOUTH)
-        }
-        northContainer.add(topBarsStack, BorderLayout.NORTH)
+        northContainer.add(buildTopToolbar(), BorderLayout.NORTH)
         northContainer.add(buildQuickModeBanner(), BorderLayout.SOUTH)
         add(northContainer, BorderLayout.NORTH)
 
@@ -315,7 +316,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) {
-                topHeaderBarPanel.revalidate()
                 topToolbarPanel.revalidate()
                 quickModeBanner.revalidate()
                 revalidate()
@@ -323,44 +323,130 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         })
     }
 
-    // [v0.2.1] 최상단 타이틀 헤더 바:
-    //   좌측: Maekom API 타이틀 + 여백 + [업데이트 확인] + 여백 + [한국어 | English] 세그먼트 스위치
-    //   우측: 실행 상태(상태: 200 OK) | 소요 시간(0 ms) | 저장 상태(● 미저장 / 저장됨 / 자동 저장됨)
-    private fun buildTopHeaderBar(): JPanel {
-        topHeaderBarPanel.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border()),
-            JBUI.Borders.empty(3, 8, 3, 8)
-        )
+    // [v0.2.2] IntelliJ 네이티브 ToolWindow 타이틀 바에 직접 부착되는 좌/우 컴포넌트 그룹 구성
+    // 변경 의도: GridBagLayout 수직 중앙 정렬로 New UI / Classic UI 헤더 높이에 맞춰 여백·정렬·실시간 폭 갱신을 일관되게 보장
+    private fun buildNativeHeaderComponents() {
+        updateCheckBtn.apply {
+            margin = JBUI.insets(1, 7)
+            isFocusable = false
+        }
 
-        appTitleLabel.font = appTitleLabel.font.deriveFont(Font.BOLD, 13f)
-        updateCheckBtn.margin = JBUI.insets(1, 7)
-
-        val leftGroup = JPanel(FlowLayout(FlowLayout.LEFT, 0, 1)).apply {
+        nativeLeftHeaderPanel.apply {
             isOpaque = false
-            add(appTitleLabel)
-            add(Box.createHorizontalStrut(14))
-            add(updateCheckBtn)
-            add(Box.createHorizontalStrut(8))
-            add(languageSegmentSwitch)
+            border = JBUI.Borders.empty(0, 8, 0, 4)
+            add(
+                updateCheckBtn,
+                GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 8)
+                }
+            )
+            add(
+                languageSegmentSwitch,
+                GridBagConstraints().apply {
+                    gridx = 1
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 2)
+                }
+            )
         }
 
         statusBadgeLabel.font = statusBadgeLabel.font.deriveFont(Font.BOLD)
         durationLabel.foreground = JBColor.GRAY
         scenarioStatusLabel.font = scenarioStatusLabel.font.deriveFont(Font.BOLD)
 
-        val rightGroup = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 2)).apply {
+        nativeRightStatusPanel.apply {
             isOpaque = false
-            add(resultStatusTitleLabel)
-            add(statusBadgeLabel)
-            add(resultDurationTitleLabel)
-            add(durationLabel)
-            add(scenarioStatusLabel)
+            border = JBUI.Borders.empty(0, 4, 0, 8)
+            add(
+                resultStatusTitleLabel,
+                GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 4)
+                }
+            )
+            add(
+                statusBadgeLabel,
+                GridBagConstraints().apply {
+                    gridx = 1
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 10)
+                }
+            )
+            add(
+                resultDurationTitleLabel,
+                GridBagConstraints().apply {
+                    gridx = 2
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 4)
+                }
+            )
+            add(
+                durationLabel,
+                GridBagConstraints().apply {
+                    gridx = 3
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 10)
+                }
+            )
+            add(
+                scenarioStatusLabel,
+                GridBagConstraints().apply {
+                    gridx = 4
+                    gridy = 0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.CENTER
+                    insets = JBUI.insets(0, 0, 0, 2)
+                }
+            )
         }
+    }
 
-        topHeaderBarPanel.add(leftGroup, BorderLayout.WEST)
-        topHeaderBarPanel.add(Box.createHorizontalGlue(), BorderLayout.CENTER)
-        topHeaderBarPanel.add(rightGroup, BorderLayout.EAST)
-        return topHeaderBarPanel
+    // [v0.2.2] ScenarioToolWindowFactory에서 네이티브 ToolWindow 타이틀 바 좌측(setTabActions)에 주입할 컴포넌트 반환
+    fun getNativeLeftHeaderComponent(): JComponent = nativeLeftHeaderPanel
+
+    // [v0.2.2] ScenarioToolWindowFactory에서 네이티브 ToolWindow 타이틀 바 우측(setTitleActions)에 주입할 컴포넌트 반환
+    fun getNativeRightStatusComponent(): JComponent = nativeRightStatusPanel
+
+    // [v0.2.2] 네이티브 타이틀 바 내부 라벨/버튼 텍스트 변경 시 ActionToolbar 및 ToolWindowHeader 상위 레이아웃까지 즉시 재계산
+    // 변경 의도: 실행 상태(200 OK 등)나 저장 상태 문구 길이가 동적으로 변할 때 타이틀 바에서 잘리거나 갱신이 지연되는 현상 방지
+    private fun revalidateNativeHeaderComponents() {
+        val action = {
+            revalidateWithAncestors(nativeLeftHeaderPanel)
+            revalidateWithAncestors(nativeRightStatusPanel)
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            action()
+        } else {
+            ApplicationManager.getApplication().invokeLater { action() }
+        }
+    }
+
+    private fun revalidateWithAncestors(component: JComponent) {
+        component.revalidate()
+        component.repaint()
+        var ancestor = component.parent
+        var depth = 0
+        while (ancestor != null && depth < 3) {
+            ancestor.revalidate()
+            ancestor.repaint()
+            ancestor = ancestor.parent
+            depth++
+        }
     }
 
     private fun buildTopToolbar(): JPanel {
@@ -1256,6 +1342,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 refreshScenarioComboBox(currentScenario.name)
                 scenarioStatusLabel.text = I18nManager.t("status.renamed", result.savedFile?.name ?: currentScenario.name)
                 scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                revalidateNativeHeaderComponents()
             }
             RenameStatus.ALREADY_EXISTS -> {
                 Messages.showWarningDialog(
@@ -1344,6 +1431,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             val statusMsg = I18nManager.t("status.extractRuleAdded", newRule.varName, newRule.jsonPath)
             scenarioStatusLabel.text = statusMsg
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            revalidateNativeHeaderComponents()
             showBalloon(extractFromResponseBtn, statusMsg, MessageType.INFO)
         }
     }
@@ -1361,6 +1449,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         isCheckingUpdate = true
         updateCheckBtn.isEnabled = false
         updateCheckBtn.text = I18nManager.t("toolbar.updateCheck.checking")
+        revalidateNativeHeaderComponents()
 
         updateService.checkForUpdatesInBackground(
             project = project,
@@ -1378,6 +1467,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val newVer = availableUpdateVersion
         if (isCheckingUpdate) {
             updateCheckBtn.text = I18nManager.t("toolbar.updateCheck.checking")
+            revalidateNativeHeaderComponents()
             return
         }
         if (!newVer.isNullOrBlank()) {
@@ -1391,7 +1481,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             updateCheckBtn.font = updateCheckBtn.font.deriveFont(Font.PLAIN)
             updateCheckBtn.foreground = JBColor.foreground()
         }
-        topHeaderBarPanel.revalidate()
+        revalidateNativeHeaderComponents()
         topToolbarPanel.revalidate()
     }
 
@@ -1443,6 +1533,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         scenarioStatusLabel.text = I18nManager.t("status.curlCopied", activeStep.displayTitle())
         scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+        revalidateNativeHeaderComponents()
         showBalloon(curlCopyBtn, I18nManager.t("curl.copied.step.msg"), MessageType.INFO)
     }
 
@@ -1471,6 +1562,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val msg = I18nManager.t("curl.copied.scenario.msg", currentScenario.steps.size)
         scenarioStatusLabel.text = I18nManager.t("status.curlCopied", currentScenario.name)
         scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+        revalidateNativeHeaderComponents()
         showBalloon(curlCopyBtn, msg, MessageType.INFO)
     }
 
@@ -1615,7 +1707,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             updateDirtyIndicator()
         }
-        topHeaderBarPanel.revalidate()
+        revalidateNativeHeaderComponents()
         topToolbarPanel.revalidate()
         revalidate()
         repaint()
@@ -1701,6 +1793,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 scenarioStatusLabel.text = ""
             }
         }
+        revalidateNativeHeaderComponents()
     }
 
     // [v0.1.3] Dirty 상태일 때만 마지막 수정 시점으로부터 30초 디바운스 후 조용히 저장 (Idle 시 디스크 I/O 0)
@@ -1730,6 +1823,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         lastAutoSavedTime = nowText
         scenarioStatusLabel.text = I18nManager.t("status.autoSaved", nowText)
         scenarioStatusLabel.foreground = JBColor.GRAY
+        revalidateNativeHeaderComponents()
     }
 
     private fun handleScenarioSwitchRequest(targetScenarioName: String) {
@@ -1816,6 +1910,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         lastAutoSavedTime = null
         markScenarioClean()
         scenarioStatusLabel.text = ""
+        revalidateNativeHeaderComponents()
     }
 
     // --- Public API invoked by Gutter Marker via ScenarioService ---
@@ -1850,6 +1945,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         statusBadgeLabel.text = I18nManager.t("result.quickReady")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
         scenarioStatusLabel.text = ""
+        revalidateNativeHeaderComponents()
     }
 
     fun addStepFromEndpoint(endpoint: ExtractedEndpoint) {
@@ -1924,6 +2020,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         displayStepResult(null)
         markScenarioClean()
         scenarioStatusLabel.text = ""
+        revalidateNativeHeaderComponents()
     }
 
     private fun saveCurrentScenario(showFeedback: Boolean) {
@@ -1940,6 +2037,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         if (showFeedback) {
             scenarioStatusLabel.text = I18nManager.t("status.saved", savedFile.name)
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            revalidateNativeHeaderComponents()
         }
     }
 
@@ -2076,6 +2174,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             saveCurrentScenario(showFeedback = false)
             scenarioStatusLabel.text = I18nManager.t("status.globalSaved")
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            revalidateNativeHeaderComponents()
         }
     }
 
@@ -2102,7 +2201,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioComboBox.toolTipText = label.ifEmpty { null }
         val estimatedWidth = (label.length * 9 + 56).coerceIn(260, 380)
         scenarioComboBox.preferredSize = Dimension(estimatedWidth, 28)
-        topHeaderBarPanel.revalidate()
         topToolbarPanel.revalidate()
     }
 
@@ -2385,6 +2483,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
         scenarioStatusLabel.text = I18nManager.t("status.scenarioRunning")
         scenarioStatusLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+        revalidateNativeHeaderComponents()
 
         clearExecutionLog()
         appendExecutionLog("=== ▶ Scenario Run: ${scenarioSnapshot.name} (${scenarioSnapshot.steps.size} steps) ===\n")
@@ -2406,6 +2505,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                                 refreshStepTablePreservingSelection(forceSelectRow = stepIndex, refreshEditor = true)
                                 statusBadgeLabel.text = I18nManager.t("result.running")
                                 statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+                                revalidateNativeHeaderComponents()
                             }
                         }
 
@@ -2445,6 +2545,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                         scenarioStatusLabel.text = "⛔ ${finalError.message ?: finalError.javaClass.simpleName}"
                         scenarioStatusLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
                         resultTabs.selectedIndex = RESULT_TAB_LOG
+                        revalidateNativeHeaderComponents()
                         return@invokeLater
                     }
 
@@ -2499,6 +2600,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                         statusBadgeLabel.text = I18nManager.t("result.idle")
                         statusBadgeLabel.foreground = JBColor.GRAY
                     }
+                    revalidateNativeHeaderComponents()
                 }
             }
         }
@@ -2531,6 +2633,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         statusBadgeLabel.text = I18nManager.t("result.singleRunning")
         statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
+        revalidateNativeHeaderComponents()
 
         clearExecutionLog()
         appendExecutionLog("=== ▶ Single Step Run: ${stepSnapshot.method.uppercase()} ${stepSnapshot.url} ===\n")
@@ -2567,6 +2670,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                         statusBadgeLabel.text = "ERROR"
                         statusBadgeLabel.foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
                         resultTabs.selectedIndex = RESULT_TAB_LOG
+                        revalidateNativeHeaderComponents()
                         return@invokeLater
                     }
 
@@ -2593,6 +2697,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         if (!isRunning) return
         stopBtn.isEnabled = false
         scenarioStatusLabel.text = I18nManager.t("status.stopping")
+        revalidateNativeHeaderComponents()
         scenarioRunner.stop()
     }
 
@@ -2620,6 +2725,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 detailLogArea.text = ""
             }
             updateExtractedVarsTabTitle()
+            revalidateNativeHeaderComponents()
             return
         }
 
@@ -2666,6 +2772,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             detailLogArea.revalidate()
             detailLogArea.repaint()
         }
+        revalidateNativeHeaderComponents()
     }
 
     private fun buildDetailLog(result: StepExecutionResult): String = buildString {
