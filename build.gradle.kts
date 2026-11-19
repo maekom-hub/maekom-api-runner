@@ -1,6 +1,7 @@
+// [v0.1.1] Maven Central BOM 호환을 위해 Kotlin 플러그인 버전을 2.1.0으로 상향
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.0.21"
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
     id("org.jetbrains.intellij.platform") version "2.2.1"
 }
 

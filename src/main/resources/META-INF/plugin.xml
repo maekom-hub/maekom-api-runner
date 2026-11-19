@@ -1,16 +1,17 @@
 <idea-plugin>
     <id>com.maekom.apirunner</id>
     <name>Maekom API Runner</name>
-    <vendor email="dev@maekom.io" url="https://github.com/maekom/maekom-api-runner">Maekom</vendor>
+    <vendor email="dev@maekom-hub.io" url="https://github.com/maekom-hub/maekom-api-runner">maekom-hub (Apache-2.0)</vendor>
 
     <description><![CDATA[
-    <b>Maekom API Runner</b> — Spring Boot API Scenario Runner &amp; PSI Auto-Sampler for IntelliJ IDEA.<br/>
+    <b>Maekom API Runner</b> — Open-source (Apache License 2.0) Spring Boot API Scenario Runner &amp; PSI Auto-Sampler for IntelliJ IDEA.<br/>
     <ul>
       <li>🌶️ Gutter chili icon on Spring Web controller endpoints (<code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code>)</li>
-      <li>Auto-generates URLs, query strings, path variables, and pretty-printed JSON request bodies from DTOs &amp; Java records</li>
-      <li>Multi-step scenario chaining with Jayway JsonPath extraction, Fail-Fast policy, and local secret separation (<code>.maekom/secrets.local.json</code>)</li>
-      <li>3-pane bottom ToolWindow with instant cancellation and non-JSON response safety</li>
+      <li>Auto-extracts <code>@RequestParam</code>, <code>@ModelAttribute</code> &amp; POJO/record fields into a dedicated <b>Params</b> tab with Javadoc/<code>@Schema</code>/<code>@Parameter</code> descriptions, and generates JSON samples from <code>@RequestBody</code> DTOs &amp; records</li>
+      <li>Multi-step scenario chaining with Jayway JsonPath extraction, Fail-Fast policy, dirty-check confirmation, and local secret separation (<code>.maekom/secrets.local.json</code>)</li>
+      <li>3-pane bottom ToolWindow with built-in <b>KO / EN</b> language switch, instant cancellation, and non-JSON response safety</li>
     </ul>
+    <p><b>License:</b> Apache License, Version 2.0 (Open Source — <a href="https://github.com/maekom-hub/maekom-api-runner">maekom-hub/maekom-api-runner</a>)</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -26,5 +27,7 @@
             anchor="bottom"
             icon="/icons/chili.svg"
             factoryClass="com.maekom.apirunner.ui.ScenarioToolWindowFactory"/>
+
+        <postStartupActivity implementation="com.maekom.apirunner.update.AutoRepositoryRegistrar"/>
     </extensions>
 </idea-plugin>

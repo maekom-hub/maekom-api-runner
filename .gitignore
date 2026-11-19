@@ -5,6 +5,10 @@ build/
 *.iml
 out/
 .maekom/secrets.local.json
+
+# Local-only management & agent instruction files
+AGENTS.md
+GEMINI.md
 manage.sh
 
 # OS & Logs

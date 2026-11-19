@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -28,11 +30,76 @@ jobs:
       - name: Build IntelliJ Plugin
         run: ./gradlew buildPlugin
 
-      - name: Verify plugin distribution archive
-        run: ls -lh build/distributions/*.zip
+      - name: Resolve version, archive filename, and Korean release notes
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="${GITHUB_REF_NAME}"
+          VERSION="${TAG_NAME#v}"
+          EXPECTED_ZIP="maekom-api-runner-${VERSION}.zip"
+          ZIP_PATH="build/distributions/${EXPECTED_ZIP}"
+
+          if [[ ! -f "$ZIP_PATH" ]]; then
+            echo "[INFO] ${ZIP_PATH} not found by exact tag name; scanning build/distributions/..."
+            shopt -s nullglob
+            ZIPS=(build/distributions/maekom-api-runner-*.zip)
+            shopt -u nullglob
+            if [[ ${#ZIPS[@]} -eq 0 ]]; then
+              echo "[ERROR] build/distributions/ 내에 플러그인 .zip 파일이 없습니다." >&2
+              exit 1
+            fi
+            ZIP_PATH="${ZIPS[0]}"
+            EXPECTED_ZIP="$(basename "$ZIP_PATH")"
+          fi
+
+          ls -lh "$ZIP_PATH"
+
+          DOWNLOAD_URL="https://github.com/maekom-hub/maekom-api-runner/releases/download/${TAG_NAME}/${EXPECTED_ZIP}"
+
+          # Collect commit changes since previous tag
+          PREV_TAG="$(git tag --sort=-v:refname | grep -Fxv "$TAG_NAME" | head -n 1 || true)"
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMIT_LOG="$(git log "${PREV_TAG}..${TAG_NAME}" --pretty=format:'- %s (`%h`)' || true)"
+          else
+            COMMIT_LOG="$(git log "$TAG_NAME" -n 20 --pretty=format:'- %s (`%h`)' || true)"
+          fi
+
+          if [[ -z "$COMMIT_LOG" ]]; then
+            COMMIT_LOG="- Maekom API Runner ${TAG_NAME} 릴리즈"
+          fi
+
+          cat <<EOF > release_notes.md
+          ## 🌶️ Maekom API Runner ${TAG_NAME}
+
+          ### 📦 직통 다운로드
+          - **[${EXPECTED_ZIP} 바로 다운로드](${DOWNLOAD_URL})**
+          - 직통 URL: \`${DOWNLOAD_URL}\`
+
+          ### 📝 주요 변경 내역
+          ${COMMIT_LOG}
+
+          ### 🛠️ IntelliJ IDEA 설치 안내
+          1. 위 링크에서 \`${EXPECTED_ZIP}\` 파일을 다운로드합니다.
+          2. IntelliJ IDEA에서 **Settings / Preferences → Plugins → ⚙️ → Install Plugin from Disk...** 메뉴를 선택합니다.
+          3. 다운로드한 \`${EXPECTED_ZIP}\` 파일을 선택한 뒤 적용하고 IDE를 재시작합니다.
+
+          ---
+          📄 **License:** Apache License 2.0 (Copyright 2026 maekom-hub)
+          EOF
+
+          {
+            echo "tag_name=${TAG_NAME}"
+            echo "version=${VERSION}"
+            echo "zip_name=${EXPECTED_ZIP}"
+            echo "zip_path=${ZIP_PATH}"
+            echo "download_url=${DOWNLOAD_URL}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release and upload plugin zip
         uses: softprops/action-gh-release@v2
         with:
-          files: build/distributions/*.zip
-          generate_release_notes: true
+          name: "Maekom API Runner ${{ steps.release_meta.outputs.tag_name }}"
+          body_path: release_notes.md
+          files: ${{ steps.release_meta.outputs.zip_path }}
