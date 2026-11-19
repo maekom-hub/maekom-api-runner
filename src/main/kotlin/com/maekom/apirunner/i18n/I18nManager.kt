@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.2.0] 상단 툴바 명칭 통일, 언어선택 콤보박스, BaseURL 환경 프로필 관리, JSON 일괄 입력, 시나리오 완료 요약 상태 KO/EN 문구 추가
-// 변경 의도: v0.2.0 전면 개편 UI의 모든 버튼·다이얼로그·안내 문구를 한국어/영어 양국어 번들에 완벽 동기화
+// [v0.3.0] 시나리오 폴더·트리 관리 팝업(ScenarioExplorerDialog) 및 Base Info 편집·드래그 앤 드롭 KO/EN 다국어 문구 추가
+// 변경 의도: 폴더 트리 탐색기, 아이콘 툴바, 이름 유효성 검사, 삭제 경고, 이동 안내 문구를 한국어/영어 양국어 번들에 완벽 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -118,8 +118,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "시나리오:",
-            "toolbar.scenarioManage" to "시나리오 관리 ▾",
-            "toolbar.scenarioManage.tooltip" to "새 시나리오 생성, 이름 변경, 복제, 삭제, 불러오기, 내보내기",
+            "toolbar.scenarioManage" to "시나리오 관리",
+            "toolbar.scenarioManage.tooltip" to "폴더·시나리오 트리 관리 (생성, 이름·설명 편집, 드래그 이동, 복제, 삭제, Import/Export)",
             "toolbar.rename" to "✎ 이름 변경",
             "toolbar.rename.tooltip" to "현재 시나리오 이름 및 저장 파일명 변경",
             "toolbar.save" to "저장",
@@ -497,7 +497,55 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "log.failReason" to "실패 원인 : %s",
             "log.warnings" to "추출 경고 :",
             "log.requestHeader" to "==================== 요청 전문 ====================",
-            "log.responseHeader" to "==================== 응답 전문 ===================="
+            "log.responseHeader" to "==================== 응답 전문 ====================",
+
+            // [v0.3.0] Scenario Explorer Dialog (Folder Tree + Base Info)
+            "explorer.title" to "시나리오 관리 (Scenario Manager)",
+            "explorer.ok" to "열기 / 확인",
+            "explorer.apply" to "적용 (Apply)",
+            "explorer.cancel" to "닫기",
+            "explorer.action.refresh" to "새로고침",
+            "explorer.action.delete" to "선택 항목 삭제",
+            "explorer.action.add" to "새 폴더 / 시나리오 추가",
+            "explorer.action.newFolder" to "새 폴더 생성 (New Folder)",
+            "explorer.action.newScenario" to "새 시나리오 생성 (New Scenario)",
+            "explorer.action.duplicate" to "시나리오 복제",
+            "explorer.action.expandAll" to "모두 펼치기",
+            "explorer.action.collapseAll" to "모두 접기",
+            "explorer.action.export" to "시나리오 내보내기 (Export)",
+            "explorer.action.import" to "시나리오 가져오기 (Import)",
+            "explorer.baseInfo.header" to "Base Info",
+            "explorer.baseInfo.empty" to "좌측 트리에서 폴더 또는 시나리오를 선택하면 이름과 설명을 편집할 수 있습니다.\n시나리오를 더블클릭하면 메인 화면에 즉시 열립니다.",
+            "explorer.baseInfo.type.folder" to "폴더",
+            "explorer.baseInfo.type.scenario" to "시나리오",
+            "explorer.baseInfo.pathLabel" to "경로:",
+            "explorer.baseInfo.nameLabel" to "Name:",
+            "explorer.baseInfo.descLabel" to "Description:",
+            "explorer.baseInfo.metaFolder" to "하위 시나리오 %d개",
+            "explorer.baseInfo.metaScenario" to "스텝 %d개 · BaseURL: %s",
+            "explorer.activeTag" to "현재 열림",
+            "explorer.hint.dnd" to "💡 마우스 드래그 앤 드롭으로 시나리오·폴더를 폴더 안팎(트리 하단 빈 여백 = 루트)으로 자유롭게 이동하거나 순서를 변경할 수 있습니다.",
+            "explorer.prompt.newFolder.title" to "새 폴더 생성",
+            "explorer.prompt.newFolder.msg" to "새 폴더 이름을 입력하세요 (위치: %s):",
+            "explorer.prompt.newScenario.title" to "새 시나리오 생성",
+            "explorer.prompt.newScenario.msg" to "새 시나리오 이름을 입력하세요 (위치: %s):",
+            "explorer.location.root" to "루트 (.maekom/scenarios)",
+            "explorer.deleteFolder.title" to "폴더 삭제 확인",
+            "explorer.deleteFolder.msg" to "폴더 '%s'과(와) 하위의 모든 항목(시나리오 %d개 포함)을 완전히 삭제하시겠습니까?",
+            "explorer.deleteScenario.title" to "시나리오 삭제 확인",
+            "explorer.deleteScenario.msg" to "시나리오 '%s'을(를) 정말 삭제하시겠습니까?",
+            "explorer.validation.empty" to "이름을 입력하세요.",
+            "explorer.validation.forbidden" to "파일/폴더 이름에 \\ / : * ? \" < > | 문자는 사용할 수 없으며 '.'으로 시작할 수 없습니다.",
+            "explorer.validation.duplicate" to "동일한 위치에 이미 같은 이름('%s')이 존재합니다.",
+            "explorer.status.applied" to "✅ 변경사항이 적용되었습니다 (%s)",
+            "explorer.status.moved" to "📦 이동 완료: %s",
+            "explorer.status.movedRenamed" to "📦 동일 이름 충돌 방지를 위해 '%s'(으)로 이동되었습니다.",
+            "explorer.status.circularBlocked" to "⚠️ 자기 자신 또는 하위 폴더로 이동할 수 없습니다.",
+            "explorer.status.duplicated" to "📋 복제 완료: %s",
+            "explorer.status.createdFolder" to "📁 폴더 생성됨: %s",
+            "explorer.status.createdScenario" to "✨ 시나리오 생성됨: %s",
+            "explorer.status.imported" to "📥 시나리오 불러오기 완료: %s",
+            "explorer.status.exported" to "📤 시나리오 내보내기 완료: %s"
         )
 
         private val EN_MESSAGES: Map<String, String> = mapOf(
@@ -507,8 +555,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // Top Toolbar
             "toolbar.scenario" to "Scenario:",
-            "toolbar.scenarioManage" to "Scenarios ▾",
-            "toolbar.scenarioManage.tooltip" to "New, Rename, Duplicate, Delete, Import, or Export scenarios",
+            "toolbar.scenarioManage" to "Scenarios",
+            "toolbar.scenarioManage.tooltip" to "Manage scenario folders & tree (New, Rename/Description, Drag & Drop, Duplicate, Delete, Import/Export)",
             "toolbar.rename" to "✎ Rename",
             "toolbar.rename.tooltip" to "Rename current scenario and its JSON file",
             "toolbar.save" to "Save",
@@ -885,7 +933,55 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "log.failReason" to "Failure Reason : %s",
             "log.warnings" to "Extraction Warnings:",
             "log.requestHeader" to "================== Request Snapshot ==================",
-            "log.responseHeader" to "================= Response Snapshot =================="
+            "log.responseHeader" to "================= Response Snapshot ==================",
+
+            // [v0.3.0] Scenario Explorer Dialog (Folder Tree + Base Info)
+            "explorer.title" to "Scenario Manager",
+            "explorer.ok" to "Open / OK",
+            "explorer.apply" to "Apply",
+            "explorer.cancel" to "Close",
+            "explorer.action.refresh" to "Refresh",
+            "explorer.action.delete" to "Delete Selected",
+            "explorer.action.add" to "Add Folder / Scenario",
+            "explorer.action.newFolder" to "New Folder",
+            "explorer.action.newScenario" to "New Scenario",
+            "explorer.action.duplicate" to "Duplicate Scenario",
+            "explorer.action.expandAll" to "Expand All",
+            "explorer.action.collapseAll" to "Collapse All",
+            "explorer.action.export" to "Export Scenario",
+            "explorer.action.import" to "Import Scenario",
+            "explorer.baseInfo.header" to "Base Info",
+            "explorer.baseInfo.empty" to "Select a folder or scenario from the tree on the left to edit its Name and Description.\nDouble-click a scenario to open it in the main runner.",
+            "explorer.baseInfo.type.folder" to "Folder",
+            "explorer.baseInfo.type.scenario" to "Scenario",
+            "explorer.baseInfo.pathLabel" to "Path:",
+            "explorer.baseInfo.nameLabel" to "Name:",
+            "explorer.baseInfo.descLabel" to "Description:",
+            "explorer.baseInfo.metaFolder" to "%d scenario(s) inside",
+            "explorer.baseInfo.metaScenario" to "%d step(s) · BaseURL: %s",
+            "explorer.activeTag" to "active",
+            "explorer.hint.dnd" to "💡 Drag & drop scenarios or folders into/out of folders (drop on empty bottom area for root) or reorder within the same level.",
+            "explorer.prompt.newFolder.title" to "New Folder",
+            "explorer.prompt.newFolder.msg" to "Enter new folder name (Location: %s):",
+            "explorer.prompt.newScenario.title" to "New Scenario",
+            "explorer.prompt.newScenario.msg" to "Enter new scenario name (Location: %s):",
+            "explorer.location.root" to "Root (.maekom/scenarios)",
+            "explorer.deleteFolder.title" to "Delete Folder",
+            "explorer.deleteFolder.msg" to "Permanently delete folder '%s' and all its contents (%d scenario(s))?",
+            "explorer.deleteScenario.title" to "Delete Scenario",
+            "explorer.deleteScenario.msg" to "Are you sure you want to delete scenario '%s'?",
+            "explorer.validation.empty" to "Name cannot be empty.",
+            "explorer.validation.forbidden" to "Name cannot contain \\ / : * ? \" < > | or start with '.'.",
+            "explorer.validation.duplicate" to "An item named '%s' already exists in this location.",
+            "explorer.status.applied" to "✅ Changes applied (%s)",
+            "explorer.status.moved" to "📦 Moved to: %s",
+            "explorer.status.movedRenamed" to "📦 Moved & auto-renamed to '%s' to avoid collision.",
+            "explorer.status.circularBlocked" to "⚠️ Cannot move a folder into itself or its subfolder.",
+            "explorer.status.duplicated" to "📋 Duplicated: %s",
+            "explorer.status.createdFolder" to "📁 Folder created: %s",
+            "explorer.status.createdScenario" to "✨ Scenario created: %s",
+            "explorer.status.imported" to "📥 Imported scenario: %s",
+            "explorer.status.exported" to "📤 Exported scenario: %s"
         )
     }
 }

@@ -1,13 +1,16 @@
 package com.maekom.apirunner.update
 
+import com.intellij.ide.plugins.PluginManagerConfigurable
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.updateSettings.impl.UpdateChecker
@@ -20,8 +23,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import javax.xml.parsers.DocumentBuilderFactory
 import org.xml.sax.InputSource
 
-// [v0.1.3] 플러그인 새 버전 비동기 조회, 우측 하단 알림(Notification) 및 IntelliJ 내장 UpdateChecker 즉시 연동 서비스 구현
-// 변경 의도: 인텔리제이 기본 24시간 저장소 캐싱 지연을 우회하여 새 릴리즈 출시 시 즉시 감지·알림·원클릭 업데이트 지원
+// [v0.3.0] 업데이트 버튼/알림 클릭 시 ModalityState.any()로 Settings > Plugins 창을 즉시 열도록 수정
+// 변경 의도: 네이티브 타이틀 바 버튼 및 백그라운드 콜백에서 UpdateChecker 호출만으로는 Settings > Plugins 창이 열리지 않는 문제를 해소
 
 data class UpdateCheckOutcome(
     val currentVersion: String,
@@ -138,39 +141,44 @@ class UpdateCheckerService {
                 notifyListeners(null)
             }
 
-            ApplicationManager.getApplication().invokeLater {
-                if (project.isDisposed) return@invokeLater
-                onComplete?.invoke(outcome)
+            ApplicationManager.getApplication().invokeLater(
+                {
+                    if (project.isDisposed) return@invokeLater
+                    onComplete?.invoke(outcome)
 
-                if (outcome.updateAvailable && outcome.remoteVersion != null) {
-                    if (interactive) {
-                        invokeIdeaUpdateChecker(project)
-                    } else if (showNotificationOnNew && notifiedVersion != outcome.remoteVersion) {
-                        notifiedVersion = outcome.remoteVersion
-                        showUpdateAvailableNotification(project, outcome.remoteVersion)
+                    if (outcome.updateAvailable && outcome.remoteVersion != null) {
+                        if (interactive) {
+                            invokeIdeaUpdateChecker(project)
+                        } else if (showNotificationOnNew && notifiedVersion != outcome.remoteVersion) {
+                            notifiedVersion = outcome.remoteVersion
+                            showUpdateAvailableNotification(project, outcome.remoteVersion)
+                        }
+                    } else if (interactive) {
+                        if (outcome.errorMessage != null) {
+                            Messages.showWarningDialog(
+                                project,
+                                I18nManager.t("update.checkFailed.msg", outcome.errorMessage),
+                                I18nManager.t("update.checkFailed.title")
+                            )
+                        } else {
+                            Messages.showInfoMessage(
+                                project,
+                                I18nManager.t("update.upToDate.msg", outcome.currentVersion),
+                                I18nManager.t("update.upToDate.title")
+                            )
+                        }
                     }
-                } else if (interactive) {
-                    if (outcome.errorMessage != null) {
-                        Messages.showWarningDialog(
-                            project,
-                            I18nManager.t("update.checkFailed.msg", outcome.errorMessage),
-                            I18nManager.t("update.checkFailed.title")
-                        )
-                    } else {
-                        Messages.showInfoMessage(
-                            project,
-                            I18nManager.t("update.upToDate.msg", outcome.currentVersion),
-                            I18nManager.t("update.upToDate.title")
-                        )
-                    }
-                }
-            }
+                },
+                ModalityState.any()
+            )
         }
     }
 
     /**
-     * Ensures custom repository host is registered and triggers IntelliJ's built-in UpdateChecker immediately.
+     * Ensures custom repository host is registered, triggers IntelliJ's background UpdateChecker,
+     * and opens `Settings > Plugins` immediately using [ModalityState.any] to avoid modality blocking.
      */
+    // [v0.3.0] ModalityState.any() 기반 Settings > Plugins 다이얼로그 직접 호출 보강
     fun invokeIdeaUpdateChecker(project: Project) {
         runCatching {
             val hosts = UpdateSettings.getInstance().storedPluginHosts
@@ -181,6 +189,17 @@ class UpdateCheckerService {
         runCatching {
             UpdateChecker.updateAndShowResult(project)
         }
+        ApplicationManager.getApplication().invokeLater(
+            {
+                if (!project.isDisposed) {
+                    ShowSettingsUtil.getInstance().showSettingsDialog(
+                        project,
+                        PluginManagerConfigurable::class.java
+                    )
+                }
+            },
+            ModalityState.any()
+        )
     }
 
     private fun fetchUpdateOutcomeSync(): UpdateCheckOutcome {

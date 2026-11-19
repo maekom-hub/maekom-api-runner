@@ -15,6 +15,7 @@ import com.maekom.apirunner.engine.BulkJsonVariableParser
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.CommonHeaderItem
+import com.maekom.apirunner.storage.ScenarioFileRepository
 import com.maekom.apirunner.storage.ScenarioStorageService
 import java.awt.BorderLayout
 import java.awt.Component
@@ -22,8 +23,10 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.ButtonGroup
 import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
@@ -44,15 +47,16 @@ enum class HeaderImportMode {
  * 2. Scenario Global Variables (legacy per-scenario vars)
  * 3. Local Secrets (.maekom/secrets.local.json)
  */
-// [v0.2.0] 시나리오 변수 탭 명칭 명확화 및 시나리오 변수·로컬 시크릿 탭에 JSON 일괄 입력(Bulk Import) 기능 추가
-// 변경 의도: 프로젝트 전역 변수와의 혼동을 없애고 JSON 붙여넣기로 시나리오 변수/로컬 시크릿을 대량 등록·병합 지원
+// [v0.3.0] 폴더 상대 경로 기반 시나리오 구분(currentScenarioPath) 및 공통 헤더 가져오기 목록 포맷('폴더명 / 시나리오명') 지원
+// 변경 의도: 서로 다른 폴더에 동일 이름의 시나리오가 공존할 때도 정확히 구분해 공통 헤더를 가져올 수 있도록 개선
 class GlobalConfigDialog(
     private val project: Project,
     private val currentScenario: ApiScenario,
     private val storage: ScenarioStorageService,
     initialCommonHeaders: List<CommonHeaderItem>,
     initialVariables: Map<String, String>,
-    initialSecrets: Map<String, String>
+    initialSecrets: Map<String, String>,
+    private val currentScenarioPath: String = currentScenario.name
 ) : DialogWrapper(project, true) {
 
     private val commonHeadersModel = object : DefaultTableModel(
@@ -186,7 +190,8 @@ class GlobalConfigDialog(
 
     private fun openImportFromScenarioDialog() {
         stopEditing(headersTable)
-        val otherScenarios = storage.listScenarios().filter { !it.equals(currentScenario.name, ignoreCase = true) }
+        val normActive = ScenarioFileRepository.normalizeRelativePath(currentScenarioPath)
+        val otherScenarios = storage.listScenarios().filter { !it.equals(normActive, ignoreCase = true) }
         if (otherScenarios.isEmpty()) {
             Messages.showInfoMessage(project, I18nManager.t("global.importHeaders.empty"), I18nManager.t("global.importHeaders.title"))
             return
@@ -422,7 +427,19 @@ class ImportCommonHeadersDialog(
         root.border = JBUI.Borders.empty(6)
 
         val topPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        scenarioCombo.preferredSize = Dimension(260, 28)
+        scenarioCombo.preferredSize = Dimension(320, 28)
+        scenarioCombo.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                val formatted = ScenarioFileRepository.formatDisplayPath(value?.toString().orEmpty())
+                return super.getListCellRendererComponent(list, formatted, index, isSelected, cellHasFocus)
+            }
+        }
         topPanel.add(JBLabel(I18nManager.t("global.importHeaders.selectLabel")))
         topPanel.add(scenarioCombo)
         root.add(topPanel, BorderLayout.NORTH)

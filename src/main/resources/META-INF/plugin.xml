@@ -4,18 +4,27 @@
     <vendor email="dev@maekom-hub.io" url="https://github.com/maekom-hub/maekom-api-runner">maekom-hub (Apache-2.0)</vendor>
 
     <description><![CDATA[
-    <b>Maekom API Runner</b> — Open-source (Apache License 2.0) Spring Boot API Scenario Runner &amp; PSI Auto-Sampler for IntelliJ IDEA.<br/>
-    <i>Spring Boot 개발자를 위한 오픈소스 IntelliJ IDEA API 시나리오 러너 및 PSI 자동 샘플러 플러그인</i><br/><br/>
+    <b>Maekom API Runner</b> — Built-in multi-step API scenario chaining &amp; runner for IntelliJ IDEA with Spring Boot PSI auto-sampling.<br/>
+    <i>IntelliJ IDEA 내장 다단계 API 시나리오 체이닝 &amp; 실행기 (Spring Boot PSI 자동 샘플링 지원)</i><br/><br/>
     <b>Key Features / 주요 기능:</b>
     <ul>
-      <li>🌶️ <b>Spring Controller Gutter Marker:</b> One-click chili icon on <code>@GetMapping</code>, <code>@PostMapping</code>, <code>@PutMapping</code>, <code>@DeleteMapping</code>, <code>@PatchMapping</code>, <code>@RequestMapping</code> (컨트롤러 메서드 옆 고추 아이콘으로 단건 실행 및 시나리오 스텝 추가)</li>
-      <li>🤖 <b>Auto-Sampler &amp; Params Tab:</b> Extracts <code>@RequestParam</code>, <code>@ModelAttribute</code> &amp; POJO/record fields with Javadoc/<code>@Schema</code>/<code>@Parameter</code> descriptions, generates JSON samples from <code>@RequestBody</code> DTOs/records, and places <code>BaseURL</code> &amp; <code>Ignore SSL</code> directly above the HTTP Method/URL bar (DTO/record 자동 추출, JSON 샘플 자동 생성 및 요청 편집기 상단 BaseURL·SSL 무시 배치)</li>
-      <li>🗂️ <b>Scenario Management, Environment Profiles &amp; Smart Auto-Save:</b> Unified Scenarios dropdown (New/Rename/Duplicate/Delete/Import/Export), persistent <code>Local/DEV/STG/PRD</code> BaseURL bar (<code>[Local ▾] → BaseURL → [Ignore SSL] → [⚙]</code> saved in <code>.maekom/environments.json</code>), Import Common Headers (Merge/Overwrite), dirty-check confirmation, and 30s Auto-Save (시나리오 통합 관리, 환경별 BaseURL 영속 프로필 및 톱니바퀴 아이콘 설정, 타 시나리오 공통 헤더 가져오기, 30초 스마트 자동 저장)</li>
-      <li>🌐 <b>Variables Hub, Bulk JSON Import &amp; Duplicate Validator:</b> Persistent Global Variables (<code>.maekom/global-variables.json</code>, Secret masking), Scenario Variables, Local Secrets with <b>Bulk JSON Import</b> (object &amp; array), 8 live KST/UTC/UUID dynamic variables, right-click insertion, and automatic duplicate name recommendations (전역/시나리오/시크릿 JSON 일괄 입력, 동적 변수 치트시트/우클릭 삽입, 변수명 중복 검증·추천)</li>
-      <li>🔗 <b>Chaining, 3-Tab Result Viewer, cURL &amp; Auto Updates:</b> Dedicated 3-tab result panel (<b>Response</b> with right-aligned <b>Extract Variables</b> button / <b>Extracted Vars (N)</b> / live auto-scrolling <b>Execution &amp; Error Logs</b>), native IntelliJ ToolWindow title bar integration with <b>한국어 | English</b> pill switch, update checker &amp; live execution/save status, Fail-Fast policy, Copy as cURL, and instant plugin update notifications (인텔리제이 네이티브 ToolWindow 타이틀 바 한/영 세그먼트 스위치·업데이트 확인·실시간 상태 표시줄 통합, 응답·추출 변수·실시간 실행 로그 3단 탭, 우측 정렬 응답 변수 추출 버튼, cURL 복사 및 새 버전 즉시 알림)</li>
+      <li>🌶️ <b>Multi-Step API Chaining &amp; Auto-Sampling:</b> Chili gutter markers on Spring controllers auto-sample <code>@RequestParam</code>/<code>@ModelAttribute</code>/<code>@RequestBody</code> DTOs &amp; records, chain responses via one-click <code>JsonPath</code> extraction, and enforce Fail-Fast (컨트롤러 고추 아이콘 자동 샘플링, JsonPath 원클릭 변수 추출 및 Fail-Fast 체이닝)</li>
+      <li>🌍 <b>Environment Profiles &amp; Ignore SSL:</b> Persistent <code>Local</code> (auto-detected <code>server.port</code>) and <code>DEV</code>/<code>STG</code>/<code>PRD</code> profiles (<code>.maekom/environments.json</code>) with self-signed HTTPS ignore (환경별 BaseURL 영속 전환 및 SSL 무시)</li>
+      <li>🌐 <b>Layered Variables &amp; Common Headers:</b> 8 live dynamic variables (<code>{{$kstNow}}</code>, <code>{{$uuid}}</code>, etc.), extracted variables, project Global Variables, Scenario Variables, Local Secrets, Bulk JSON Import &amp; duplicate validator (동적·추출·전역·시나리오·시크릿 계층 관리, JSON 일괄 입력 및 중복 검증)</li>
+      <li>🗂️ <b>Folder-Based Scenario Tree Manager:</b> Organize scenarios into nested folders under <code>.maekom/scenarios/</code> (100% compatible with legacy root JSON files) with Drag &amp; Drop moves/reordering, <code>Base Info</code> (<code>Name</code>/<code>Description</code>) editing, Import/Export &amp; 30s Auto-Save (폴더 기반 시나리오 트리, 드래그 앤 드롭 이동·정렬, Base Info 편집 및 스마트 자동 저장)</li>
+      <li>📋 <b>One-Click cURL, KO/EN Switch &amp; Updates:</b> Copy single-step or full-scenario <code>cURL</code>, toggle <b>한국어 | English</b> on IntelliJ's native ToolWindow title bar, and open <code>Settings &gt; Plugins</code> directly from the update button (cURL 복사, 네이티브 타이틀 바 한/영 전환 및 업데이트 설정 즉시 이동)</li>
     </ul>
     <p><b>License:</b> Apache License, Version 2.0 (<a href="https://github.com/maekom-hub/maekom-api-runner">maekom-hub/maekom-api-runner</a>)</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+    <h3>v0.3.0</h3>
+    <ul>
+      <li><b>Folder-Based Scenario Manager:</b> Added tree explorer dialog (<code>ScenarioExplorerDialog</code>) with compact <code>AllIcons</code> toolbar, empty folder preservation, bidirectional folder &amp; scenario Drag &amp; Drop (including root drop on empty space + circular/collision guards), and <code>Base Info</code> (<code>Name</code>/<code>Description</code>) editing with 100% backward compatibility for existing <code>.maekom/scenarios/*.json</code> files.</li>
+      <li><b>Settings &gt; Plugins Update Button Fix:</b> Fixed the native ToolWindow title bar <b>Check Updates / Update Available</b> button to reliably open <code>Settings &gt; Plugins</code> via <code>ModalityState.any()</code>.</li>
+      <li><b>Slimmer Docs:</b> Streamlined <code>README.md</code> and plugin description around core workflows.</li>
+    </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>

@@ -6,11 +6,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileChooser.FileChooser
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
-import com.intellij.openapi.fileChooser.FileChooserFactory
-import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
@@ -52,12 +49,13 @@ import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepExecutionResult
 import com.maekom.apirunner.model.StepStatus
 import com.maekom.apirunner.psi.PsiEndpointExtractor
-import com.maekom.apirunner.storage.RenameStatus
+import com.maekom.apirunner.storage.ScenarioFileRepository
 import com.maekom.apirunner.storage.ScenarioStorageService
 import com.maekom.apirunner.update.UpdateCheckerService
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
@@ -69,7 +67,6 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import java.io.File
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
@@ -95,9 +92,9 @@ import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.2.2] 중복 생성된 커스텀 'Maekom API' 헤더 행을 제거하고, 업데이트 확인·한/영 세그먼트 스위치·실행/저장 상태 표시줄을
-//          IntelliJ 네이티브 ToolWindow 타이틀 바(setTabActions / setTitleActions)에 직접 주입할 수 있도록 전용 컴포넌트 제공
-// 변경 의도: 불필요한 2번째 헤더 줄을 없애 세로 작업 공간을 넓히고 IntelliJ 네이티브 ToolWindow UI와 완벽하게 일체화
+// [v0.3.0] 폴더 상대 경로(currentScenarioPath) 추적, '폴더명 / 시나리오명' ComboBox 표시,
+//          ScenarioExplorerDialog 연동 및 네이티브 타이틀 바 업데이트 확인 버튼 ModalityState.any() 대응
+// 변경 의도: 기존 루트 시나리오와의 100% 하위 호환성을 유지하면서 폴더 트리 관리·저장 경로 보존·Settings > Plugins 즉시 오픈을 보장
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     companion object {
@@ -122,6 +119,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val autoSaveAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
 
     private var currentScenario: ApiScenario = ApiScenario()
+    private var currentScenarioPath: String = "default"
     private var environmentConfig: EnvironmentConfig = EnvironmentConfig()
     private var savedScenarioSnapshotJson: String = ""
     private var quickSingleStep: ApiStep? = null
@@ -285,10 +283,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         updateService.addUpdateListener(this) { newVersion ->
-            ApplicationManager.getApplication().invokeLater {
-                availableUpdateVersion = newVersion
-                refreshUpdateButtonAppearance()
-            }
+            ApplicationManager.getApplication().invokeLater(
+                {
+                    availableUpdateVersion = newVersion
+                    refreshUpdateButtonAppearance()
+                },
+                ModalityState.any()
+            )
         }
     }
 
@@ -329,6 +330,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         updateCheckBtn.apply {
             margin = JBUI.insets(1, 7)
             isFocusable = false
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         }
 
         nativeLeftHeaderPanel.apply {
@@ -452,11 +454,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun buildTopToolbar(): JPanel {
         topToolbarPanel.border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
 
-        // [v0.1.3] 긴 시나리오명이 잘리지 않도록 시나리오 ComboBox 최소/선호 폭 확장 및 항목별 툴팁 동기화
-        // 변경 의도: 상단 툴바에서 긴 시나리오 이름을 온전히 확인하고 마우스 오버 시 전체 이름을 표시
+        // [v0.3.0] 루트 시나리오는 '시나리오명', 폴더 내부 시나리오는 '폴더명 / 시나리오명'으로 표시하며 전체 경로 툴팁 동기화
         scenarioComboBox.minimumSize = Dimension(240, 28)
         scenarioComboBox.preferredSize = Dimension(280, 28)
-        scenarioComboBox.maximumSize = Dimension(420, 28)
+        scenarioComboBox.maximumSize = Dimension(460, 28)
         scenarioComboBox.renderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(
                 list: JList<*>?,
@@ -465,8 +466,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 isSelected: Boolean,
                 cellHasFocus: Boolean
             ): Component {
-                val comp = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-                toolTipText = value?.toString()
+                val rawPath = value?.toString().orEmpty()
+                val formatted = ScenarioFileRepository.formatDisplayPath(rawPath).ifEmpty { rawPath }
+                val comp = super.getListCellRendererComponent(list, formatted, index, isSelected, cellHasFocus)
+                toolTipText = formatted.ifEmpty { null }
                 return comp
             }
         }
@@ -850,9 +853,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private fun wireEvents() {
         scenarioComboBox.addActionListener {
             if (isUpdatingUi) return@addActionListener
-            val selectedName = scenarioComboBox.selectedItem as? String ?: return@addActionListener
-            if (selectedName == currentScenario.name && !isQuickSingleMode) return@addActionListener
-            handleScenarioSwitchRequest(selectedName)
+            val selectedPath = scenarioComboBox.selectedItem as? String ?: return@addActionListener
+            if (selectedPath == currentScenarioPath && !isQuickSingleMode) return@addActionListener
+            handleScenarioSwitchRequest(selectedPath)
         }
 
         envComboBox.addActionListener {
@@ -862,7 +865,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         envManageBtn.addActionListener { openEnvironmentManagerDialog() }
 
-        scenarioManageBtn.addActionListener { showScenarioManageMenu() }
+        scenarioManageBtn.addActionListener { openScenarioExplorerDialog() }
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
         variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
@@ -1228,35 +1231,65 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         return result.values.toList()
     }
 
-    // --- Feature 1: Consolidated Scenario Management Dropdown ---
+    // --- Feature 1: Folder-Based Scenario Explorer Dialog (v0.3.0) ---
 
-    // [v0.2.0] 시나리오 관리 드롭다운에 불러오기(Import)/내보내기(Export)까지 6개 항목 완전 통합
-    private fun showScenarioManageMenu() {
-        val newLabel = I18nManager.t("menu.scenarioActions.new")
-        val renameLabel = I18nManager.t("menu.scenarioActions.rename")
-        val duplicateLabel = I18nManager.t("menu.scenarioActions.duplicate")
-        val deleteLabel = I18nManager.t("menu.scenarioActions.delete")
-        val importLabel = I18nManager.t("menu.import")
-        val exportLabel = I18nManager.t("menu.export")
-        val actions = listOf(newLabel, renameLabel, duplicateLabel, deleteLabel, importLabel, exportLabel)
+    // [v0.3.0] [시나리오 관리] 클릭 시 폴더·시나리오 트리 관리 모달(ScenarioExplorerDialog)을 열고,
+    //          팝업 내 폴더/시나리오 이름 변경·이동·삭제 결과를 메인 화면의 활성 경로와 ComboBox에 즉시 동기화
+    private fun openScenarioExplorerDialog() {
+        stopAllTableEdits()
+        syncEditorToCurrentStep()
 
-        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("menu.scenarioActions.title"), actions) {
-            override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
-                return doFinalStep {
-                    when (selectedValue) {
-                        newLabel -> createNewScenarioDialog()
-                        renameLabel -> renameCurrentScenarioDialog()
-                        duplicateLabel -> duplicateCurrentScenario()
-                        deleteLabel -> deleteCurrentScenario()
-                        importLabel -> importExternalScenario()
-                        exportLabel -> exportCurrentScenario()
-                    }
-                }
+        val dialog = ScenarioExplorerDialog(
+            project = project,
+            storage = storage,
+            initialActiveScenarioPath = currentScenarioPath,
+            defaultBaseUrlProvider = {
+                baseUrlField.text.trim().ifEmpty { PsiEndpointExtractor.detectServerBaseUrl(project) }
+            }
+        )
+        dialog.show()
+
+        // 1) 현재 열려 있던 시나리오(또는 그 상위 폴더)가 삭제된 경우 안전하게 대체 시나리오 로드
+        if (dialog.activeScenarioWasDeleted) {
+            autoSaveAlarm.cancelAllRequests()
+            val remaining = storage.listScenarios()
+            if (remaining.isEmpty()) {
+                val detectedBaseUrl = PsiEndpointExtractor.detectServerBaseUrl(project)
+                val freshDefault = ApiScenario(name = "default", baseUrl = detectedBaseUrl)
+                storage.saveScenario(freshDefault, "default")
+                refreshScenarioComboBox("default")
+                loadScenarioByPath("default")
+                Messages.showInfoMessage(project, I18nManager.t("dialog.delete.lastReset"), I18nManager.t("dialog.delete.title"))
+            } else {
+                val preferred = dialog.selectedScenarioPathToOpen?.takeIf { it in remaining } ?: remaining.first()
+                refreshScenarioComboBox(preferred)
+                loadScenarioByPath(preferred)
+            }
+            return
+        }
+
+        // 2) 현재 열려 있던 시나리오(또는 상위 폴더)의 경로·이름·설명이 변경된 경우 즉시 동기화 (미저장 상태 보존)
+        val wasDirtyBeforeSync = isScenarioDirty()
+        if (dialog.trackedActiveScenarioPath != currentScenarioPath || dialog.activeScenarioMetadataUpdated) {
+            currentScenarioPath = dialog.trackedActiveScenarioPath
+            currentScenario.name = ScenarioFileRepository.baseNameOf(currentScenarioPath)
+            storage.loadScenario(currentScenarioPath)?.let { diskCopy ->
+                currentScenario.description = diskCopy.description
+            }
+            if (!wasDirtyBeforeSync) {
+                markScenarioClean()
             }
         }
-        JBPopupFactory.getInstance()
-            .createListPopup(popupStep)
-            .showUnderneathOf(scenarioManageBtn)
+
+        refreshScenarioComboBox(currentScenarioPath)
+
+        // 3) 더블클릭 또는 [열기 / 확인]으로 다른 시나리오를 선택한 경우 미저장 변경사항 가드 거쳐 전환
+        if (dialog.isOK) {
+            val targetPath = dialog.selectedScenarioPathToOpen
+            if (!targetPath.isNullOrBlank() && (targetPath != currentScenarioPath || isQuickSingleMode)) {
+                handleScenarioSwitchRequest(targetPath)
+            }
+        }
     }
 
     // [v0.2.0] BaseURL 환경 프로필(Local/DEV/STG/PRD) 전환·수정·관리 다이얼로그 연동
@@ -1314,57 +1347,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val profile = environmentConfig.profiles.firstOrNull { it.name.equals(activeName, ignoreCase = true) }
         if (profile != null && profile.baseUrl != newUrl) {
             profile.baseUrl = newUrl
-        }
-    }
-
-    private fun renameCurrentScenarioDialog() {
-        stopAllTableEdits()
-        syncEditorToCurrentStep()
-
-        val inputName = Messages.showInputDialog(
-            project,
-            I18nManager.t("dialog.rename.msg"),
-            I18nManager.t("dialog.rename.title"),
-            Messages.getQuestionIcon(),
-            currentScenario.name,
-            null
-        )?.trim()
-        if (inputName.isNullOrBlank()) return
-        if (inputName == currentScenario.name) return
-
-        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
-        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
-
-        val result = storage.renameScenario(currentScenario, inputName)
-        when (result.status) {
-            RenameStatus.SUCCESS -> {
-                markScenarioClean()
-                refreshScenarioComboBox(currentScenario.name)
-                scenarioStatusLabel.text = I18nManager.t("status.renamed", result.savedFile?.name ?: currentScenario.name)
-                scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
-                revalidateNativeHeaderComponents()
-            }
-            RenameStatus.ALREADY_EXISTS -> {
-                Messages.showWarningDialog(
-                    project,
-                    I18nManager.t("dialog.rename.exists.msg", result.sanitizedName),
-                    I18nManager.t("dialog.rename.exists.title")
-                )
-            }
-            RenameStatus.INVALID_NAME -> {
-                Messages.showWarningDialog(
-                    project,
-                    I18nManager.t("dialog.rename.invalid.msg"),
-                    I18nManager.t("dialog.rename.title")
-                )
-            }
-            RenameStatus.FAILED -> {
-                Messages.showErrorDialog(
-                    project,
-                    I18nManager.t("dialog.rename.failed.msg"),
-                    I18nManager.t("dialog.error.title")
-                )
-            }
         }
     }
 
@@ -1815,9 +1797,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
-        storage.saveScenario(currentScenario)
+        storage.saveScenario(currentScenario, currentScenarioPath)
         markScenarioClean()
-        refreshScenarioComboBox(currentScenario.name)
+        refreshScenarioComboBox(currentScenarioPath)
 
         val nowText = LocalTime.now().format(AUTO_SAVE_TIME_FMT)
         lastAutoSavedTime = nowText
@@ -1826,14 +1808,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         revalidateNativeHeaderComponents()
     }
 
-    private fun handleScenarioSwitchRequest(targetScenarioName: String) {
+    private fun handleScenarioSwitchRequest(targetScenarioPath: String) {
         stopAllTableEdits()
         syncEditorToCurrentStep()
         currentScenario.baseUrl = baseUrlField.text.trim()
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
         if (!isScenarioDirty()) {
-            loadScenarioByName(targetScenarioName)
+            loadScenarioByPath(targetScenarioPath)
             return
         }
 
@@ -1850,15 +1832,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         when (choice) {
             Messages.YES -> {
                 saveCurrentScenario(showFeedback = false)
-                loadScenarioByName(targetScenarioName)
+                loadScenarioByPath(targetScenarioPath)
             }
             Messages.NO -> {
-                loadScenarioByName(targetScenarioName)
+                loadScenarioByPath(targetScenarioPath)
             }
             else -> {
                 isUpdatingUi = true
                 try {
-                    scenarioComboBox.selectedItem = currentScenario.name
+                    scenarioComboBox.selectedItem = currentScenarioPath
                 } finally {
                     isUpdatingUi = false
                 }
@@ -1874,23 +1856,26 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             .firstOrNull { it.name.equals(environmentConfig.selectedEnvironment, ignoreCase = true) }
             ?.baseUrl?.takeIf { it.isNotBlank() } ?: detectedBaseUrl
 
-        val existingNames = storage.listScenarios()
+        val existingPaths = storage.listScenarios()
 
         isUpdatingUi = true
         try {
             scenarioComboModel.removeAllElements()
-            if (existingNames.isEmpty()) {
+            if (existingPaths.isEmpty()) {
+                currentScenarioPath = "default"
                 currentScenario = ApiScenario(
                     name = "default",
                     baseUrl = activeEnvUrl
                 )
-                scenarioComboModel.addElement(currentScenario.name)
-                scenarioComboBox.selectedItem = currentScenario.name
+                scenarioComboModel.addElement(currentScenarioPath)
+                scenarioComboBox.selectedItem = currentScenarioPath
             } else {
-                existingNames.forEach { scenarioComboModel.addElement(it) }
-                val first = existingNames.first()
-                currentScenario = storage.loadScenario(first) ?: ApiScenario(name = first, baseUrl = activeEnvUrl)
-                scenarioComboBox.selectedItem = currentScenario.name
+                existingPaths.forEach { scenarioComboModel.addElement(it) }
+                val firstPath = existingPaths.first()
+                currentScenarioPath = firstPath
+                currentScenario = storage.loadScenario(firstPath)
+                    ?: ApiScenario(name = ScenarioFileRepository.baseNameOf(firstPath), baseUrl = activeEnvUrl)
+                scenarioComboBox.selectedItem = currentScenarioPath
             }
 
             currentScenario.baseUrl = activeEnvUrl
@@ -1906,7 +1891,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
-        syncScenarioComboTooltip(currentScenario.name)
+        syncScenarioComboTooltip(currentScenarioPath)
         lastAutoSavedTime = null
         markScenarioClean()
         scenarioStatusLabel.text = ""
@@ -1969,14 +1954,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         saveCurrentScenario(showFeedback = false)
     }
 
-    // --- Scenario CRUD & Import/Export ---
+    // --- Scenario Load / Save / Global Config ---
 
-    private fun loadScenarioByName(name: String) {
-        val loaded = storage.loadScenario(name)
+    private fun loadScenarioByPath(relativePath: String) {
+        val normPath = ScenarioFileRepository.normalizeRelativePath(relativePath)
+        val loaded = storage.loadScenario(normPath)
         if (loaded == null) {
             Messages.showErrorDialog(
                 project,
-                I18nManager.t("dialog.loadFail.msg", name),
+                I18nManager.t("dialog.loadFail.msg", ScenarioFileRepository.formatDisplayPath(normPath)),
                 I18nManager.t("dialog.loadFail.title")
             )
             return
@@ -1988,6 +1974,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         quickModeBanner.isVisible = false
         lastAutoSavedTime = null
 
+        currentScenarioPath = normPath
         currentScenario = loaded
         stepStatuses.clear()
         stepResults.clear()
@@ -2005,7 +1992,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             }
             baseUrlField.text = currentScenario.baseUrl
             ignoreSslCheckbox.isSelected = currentScenario.ignoreSsl
-            scenarioComboBox.selectedItem = currentScenario.name
+            scenarioComboBox.selectedItem = currentScenarioPath
             stepTableModel.fireTableDataChanged()
         } finally {
             isUpdatingUi = false
@@ -2016,7 +2003,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } else {
             refreshEditorFromSelection()
         }
-        syncScenarioComboTooltip(currentScenario.name)
+        syncScenarioComboTooltip(currentScenarioPath)
         displayStepResult(null)
         markScenarioClean()
         scenarioStatusLabel.text = ""
@@ -2029,128 +2016,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
-        val savedFile = storage.saveScenario(currentScenario)
+        val savedFile = storage.saveScenario(currentScenario, currentScenarioPath)
         storage.saveEnvironmentConfig(environmentConfig)
         lastAutoSavedTime = null
         markScenarioClean()
-        refreshScenarioComboBox(currentScenario.name)
+        refreshScenarioComboBox(currentScenarioPath)
         if (showFeedback) {
             scenarioStatusLabel.text = I18nManager.t("status.saved", savedFile.name)
             scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
             revalidateNativeHeaderComponents()
-        }
-    }
-
-    private fun createNewScenarioDialog() {
-        val inputName = Messages.showInputDialog(
-            project,
-            I18nManager.t("dialog.newScenario.msg"),
-            I18nManager.t("dialog.newScenario.title"),
-            Messages.getQuestionIcon()
-        )?.trim()
-        if (inputName.isNullOrBlank()) return
-
-        val safeName = storage.sanitizeFileName(inputName)
-        val detectedBaseUrl = PsiEndpointExtractor.detectServerBaseUrl(project)
-        val newScenario = ApiScenario(name = safeName, baseUrl = detectedBaseUrl)
-        storage.saveScenario(newScenario)
-
-        refreshScenarioComboBox(safeName)
-        loadScenarioByName(safeName)
-    }
-
-    private fun importExternalScenario() {
-        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("json").apply {
-            title = I18nManager.t("dialog.import.title")
-        }
-        val chosen = FileChooser.chooseFile(descriptor, project, null) ?: return
-        try {
-            val imported = storage.importScenario(File(chosen.path))
-            refreshScenarioComboBox(imported.name)
-            loadScenarioByName(imported.name)
-            Messages.showInfoMessage(
-                project,
-                I18nManager.t("dialog.import.okMsg", imported.name),
-                I18nManager.t("dialog.import.okTitle")
-            )
-        } catch (e: Exception) {
-            Messages.showErrorDialog(
-                project,
-                I18nManager.t("dialog.import.errMsg", e.message ?: ""),
-                I18nManager.t("dialog.error.title")
-            )
-        }
-    }
-
-    private fun exportCurrentScenario() {
-        stopAllTableEdits()
-        syncEditorToCurrentStep()
-        val saverDescriptor = FileSaverDescriptor(
-            I18nManager.t("dialog.export.title"),
-            I18nManager.t("dialog.export.desc"),
-            "json"
-        )
-        val saveDialog = FileChooserFactory.getInstance().createSaveFileDialog(saverDescriptor, project)
-        val wrapper = saveDialog.save("${currentScenario.name}.json") ?: return
-        try {
-            storage.exportScenario(currentScenario, wrapper.file)
-            Messages.showInfoMessage(
-                project,
-                I18nManager.t("dialog.export.okMsg", wrapper.file.absolutePath),
-                I18nManager.t("dialog.export.okTitle")
-            )
-        } catch (e: Exception) {
-            Messages.showErrorDialog(
-                project,
-                I18nManager.t("dialog.export.errMsg", e.message ?: ""),
-                I18nManager.t("dialog.error.title")
-            )
-        }
-    }
-
-    private fun duplicateCurrentScenario() {
-        saveCurrentScenario(showFeedback = false)
-        val newName = Messages.showInputDialog(
-            project,
-            I18nManager.t("dialog.duplicate.msg"),
-            I18nManager.t("dialog.duplicate.title"),
-            Messages.getQuestionIcon(),
-            "${currentScenario.name}_copy",
-            null
-        )?.trim()
-        if (newName.isNullOrBlank()) return
-
-        val duplicated = storage.duplicateScenario(currentScenario.name, newName)
-        if (duplicated != null) {
-            refreshScenarioComboBox(duplicated.name)
-            loadScenarioByName(duplicated.name)
-        }
-    }
-
-    private fun deleteCurrentScenario() {
-        val name = currentScenario.name
-        val confirm = Messages.showYesNoDialog(
-            project,
-            I18nManager.t("dialog.delete.msg", name),
-            I18nManager.t("dialog.delete.title"),
-            Messages.getWarningIcon()
-        )
-        if (confirm != Messages.YES) return
-
-        autoSaveAlarm.cancelAllRequests()
-        storage.deleteScenario(name)
-
-        val remaining = storage.listScenarios()
-        if (remaining.isEmpty()) {
-            val detectedBaseUrl = PsiEndpointExtractor.detectServerBaseUrl(project)
-            val freshDefault = ApiScenario(name = "default", baseUrl = detectedBaseUrl)
-            storage.saveScenario(freshDefault)
-            refreshScenarioComboBox(freshDefault.name)
-            loadScenarioByName(freshDefault.name)
-            Messages.showInfoMessage(project, I18nManager.t("dialog.delete.lastReset"), I18nManager.t("dialog.delete.title"))
-        } else {
-            refreshScenarioComboBox(remaining.first())
-            loadScenarioByName(remaining.first())
         }
     }
 
@@ -2165,7 +2039,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             storage = storage,
             initialCommonHeaders = currentScenario.effectiveCommonHeaderItems(),
             initialVariables = currentScenario.globalVariables,
-            initialSecrets = currentSecrets
+            initialSecrets = currentSecrets,
+            currentScenarioPath = currentScenarioPath
         )
         if (dialog.showAndGet()) {
             currentScenario.applyCommonHeaderItems(dialog.getCommonHeaderItems())
@@ -2178,28 +2053,33 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    private fun refreshScenarioComboBox(selectedName: String) {
-        val names = storage.listScenarios().toMutableList()
-        if (selectedName !in names) {
-            names.add(selectedName)
-            names.sortWith(String.CASE_INSENSITIVE_ORDER)
+    private fun refreshScenarioComboBox(selectedPath: String) {
+        val paths = storage.listScenarios().toMutableList()
+        if (selectedPath.isNotBlank() && selectedPath !in paths) {
+            paths.add(selectedPath)
+            paths.sortWith(
+                compareBy<String>(
+                    { ScenarioFileRepository.parentFolderOf(it).lowercase() },
+                    { ScenarioFileRepository.baseNameOf(it).lowercase() }
+                )
+            )
         }
         isUpdatingUi = true
         try {
             scenarioComboModel.removeAllElements()
-            names.forEach { scenarioComboModel.addElement(it) }
-            scenarioComboBox.selectedItem = selectedName
+            paths.forEach { scenarioComboModel.addElement(it) }
+            scenarioComboBox.selectedItem = selectedPath
         } finally {
             isUpdatingUi = false
         }
-        syncScenarioComboTooltip(selectedName)
+        syncScenarioComboTooltip(selectedPath)
     }
 
-    // [v0.1.3] 시나리오 선택 ComboBox 툴팁 및 동적 선호 폭 동기화 (긴 시나리오명 전체 가시성 확보)
-    private fun syncScenarioComboTooltip(selectedName: String?) {
-        val label = selectedName?.trim().orEmpty()
+    // [v0.3.0] 시나리오 선택 ComboBox 툴팁('폴더명 / 시나리오명') 및 동적 선호 폭 동기화
+    private fun syncScenarioComboTooltip(selectedPath: String?) {
+        val label = ScenarioFileRepository.formatDisplayPath(selectedPath.orEmpty())
         scenarioComboBox.toolTipText = label.ifEmpty { null }
-        val estimatedWidth = (label.length * 9 + 56).coerceIn(260, 380)
+        val estimatedWidth = (label.length * 9 + 56).coerceIn(260, 420)
         scenarioComboBox.preferredSize = Dimension(estimatedWidth, 28)
         topToolbarPanel.revalidate()
     }

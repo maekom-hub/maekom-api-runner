@@ -4,8 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.util.UUID
 
-// [v0.1.3] 공통 헤더 항목(CommonHeaderItem: Enabled/Secret 지원) 및 프로젝트 영속 전역 변수 항목(GlobalVariableItem) 모델 추가
-// 변경 의도: 시나리오 간 공통 헤더 병합/덮어쓰기 가져오기와 시나리오 전환 시에도 유지되는 프로젝트 전역 변수 CRUD를 하위 호환되게 지원
+// [v0.3.0] 시나리오 설명(description) 필드 및 폴더 메타데이터(FolderMetadata)·트리 탐색 스냅샷 모델 추가
+// 변경 의도: 기존 .maekom/scenarios/*.json 파일과의 100% 하위 호환성(기본값 + ignoreUnknown)을 유지하며
+//          폴더 기반 트리 구조, 빈 폴더 보존, Base Info(Name/Description) 편집 및 동일 레벨 정렬 순서를 지원
 
 enum class HttpMethod {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS;
@@ -129,8 +130,48 @@ data class ApiStep(
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+data class FolderMetadata(
+    var description: String = "",
+    var order: MutableList<String> = mutableListOf()
+)
+
+data class ScenarioEntryInfo(
+    val relativePath: String,
+    val folderPath: String,
+    val name: String,
+    val description: String = "",
+    val primaryMethod: String? = null,
+    val primaryUrl: String? = null,
+    val stepCount: Int = 0,
+    val baseUrl: String = ""
+) {
+    fun displayLabel(): String {
+        return if (folderPath.isBlank()) {
+            name
+        } else {
+            "${folderPath.replace("/", " / ")} / $name"
+        }
+    }
+}
+
+data class FolderEntryInfo(
+    val relativePath: String,
+    val parentPath: String,
+    val name: String,
+    val description: String = "",
+    val scenarioCount: Int = 0
+)
+
+data class ScenarioTreeSnapshot(
+    val folders: List<FolderEntryInfo>,
+    val scenarios: List<ScenarioEntryInfo>,
+    val folderOrders: Map<String, List<String>> = emptyMap()
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ApiScenario(
     var name: String = "default",
+    var description: String = "",
     var baseUrl: String = "http://localhost:8080",
     var ignoreSsl: Boolean = false,
     var globalHeaders: MutableMap<String, String> = linkedMapOf(
@@ -143,6 +184,7 @@ data class ApiScenario(
 ) {
     fun deepCopy(newName: String = name): ApiScenario = ApiScenario(
         name = newName,
+        description = description,
         baseUrl = baseUrl,
         ignoreSsl = ignoreSsl,
         globalHeaders = LinkedHashMap(globalHeaders),

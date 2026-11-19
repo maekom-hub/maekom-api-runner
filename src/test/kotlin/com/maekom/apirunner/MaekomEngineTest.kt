@@ -22,6 +22,9 @@ import com.maekom.apirunner.model.QueryParamItem
 import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepStatus
 import com.maekom.apirunner.psi.PsiEndpointExtractor
+import com.maekom.apirunner.storage.MoveStatus
+import com.maekom.apirunner.storage.RenameStatus
+import com.maekom.apirunner.storage.ScenarioFileRepository
 import com.maekom.apirunner.ui.GlobalConfigDialog
 import com.maekom.apirunner.ui.HeaderImportMode
 import com.maekom.apirunner.update.UpdateCheckerService
@@ -32,7 +35,10 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import java.net.InetSocketAddress
+import java.nio.file.Path
 
 // [v0.1.2] 동적 시간/UUID 변수, JsonPath 역추적기, cURL 내보내기, 다국어 번들 검증 단위 테스트 추가
 class MaekomEngineTest {
@@ -508,5 +514,101 @@ class MaekomEngineTest {
 
         // 4. Invalid JSON rejected gracefully
         assertTrue(BulkJsonVariableParser.parse("not-json").isFailure)
+    }
+
+    // [v0.3.0] 폴더 상대 경로 스토리지, 구버전 루트 JSON 하위 호환성, 빈 폴더 보존, 이동/충돌/순환이동 방어 단위 테스트
+    @Test
+    fun `scenario file repository preserves legacy root json, empty folders, dnd moves, and circular guard`(
+        @TempDir tempDir: Path
+    ) {
+        val scenariosDir = tempDir.resolve("scenarios").toFile().apply { mkdirs() }
+        val refreshedFiles = mutableListOf<File>()
+        val repo = ScenarioFileRepository(
+            scenariosDirProvider = { scenariosDir },
+            vfsRefresher = { file -> if (file != null) refreshedFiles.add(file) }
+        )
+
+        // 1. Legacy root JSON without description field loads losslessly at root
+        val legacyFile = File(scenariosDir, "AIR_APP_LegacyOpen.json")
+        legacyFile.writeText(
+            """
+            {
+              "name": "AIR_APP_LegacyOpen",
+              "baseUrl": "http://localhost:8080",
+              "ignoreSsl": false,
+              "steps": [
+                { "method": "POST", "url": "/api/open", "expectedStatus": "200" }
+              ]
+            }
+            """.trimIndent()
+        )
+        val loadedLegacy = repo.loadScenario("AIR_APP_LegacyOpen")
+        assertNotNull(loadedLegacy)
+        assertEquals("", loadedLegacy!!.description)
+        assertEquals("AIR_APP_LegacyOpen", loadedLegacy.name)
+
+        // 2. Empty folder creation & scanning (must be preserved even with 0 scenarios)
+        val emptyFolderRes = repo.createFolder("", "empty-folder", description = "설명 텍스트")
+        assertEquals(RenameStatus.SUCCESS, emptyFolderRes.status)
+        val authRes = repo.createFolder("", "auth-folder")
+        assertEquals(RenameStatus.SUCCESS, authRes.status)
+        val adminRes = repo.createFolder("", "admin-folder")
+        assertEquals(RenameStatus.SUCCESS, adminRes.status)
+
+        // 3. Same scenario name in different folders coexists cleanly
+        assertEquals(RenameStatus.SUCCESS, repo.createScenario("auth-folder", "login", "http://localhost:8080", "인증 로그인").status)
+        assertEquals(RenameStatus.SUCCESS, repo.createScenario("admin-folder", "login", "http://localhost:8080", "관리자 로그인").status)
+
+        val snap = repo.scanTreeSnapshot()
+        assertTrue(
+            snap.folders.any { it.relativePath == "empty-folder" && it.scenarioCount == 0 && it.description == "설명 텍스트" },
+            "Actual folders: ${snap.folders}, scenarios: ${snap.scenarios}"
+        )
+        assertEquals(3, snap.scenarios.size) // legacy root + 2 nested
+        assertFalse(snap.scenarios.any { it.name.startsWith(".") }) // .folder.meta.json excluded
+
+        // 4. Windows/Unix path normalization & forbidden name validation (including Korean names)
+        assertEquals("인증폴더/로그인", ScenarioFileRepository.normalizeRelativePath("""\인증폴더\로그인.json"""))
+        assertEquals("인증폴더 / 로그인", ScenarioFileRepository.formatDisplayPath("인증폴더/로그인"))
+        assertFalse(ScenarioFileRepository.isValidItemName("bad:name"))
+        assertFalse(ScenarioFileRepository.isValidItemName("bad/name"))
+        assertFalse(ScenarioFileRepository.isValidItemName(".hidden"))
+        assertTrue(ScenarioFileRepository.isValidItemName("정상_시나리오 01"))
+
+        // 5. Move scenario from folder to root & collision auto-rename (_1)
+        val moveToRoot = repo.moveScenario("auth-folder/login", "")
+        assertEquals(MoveStatus.SUCCESS, moveToRoot.status)
+        assertEquals("login", moveToRoot.newRelativePath)
+        assertFalse(moveToRoot.renamedDueToCollision)
+
+        val moveCollision = repo.moveScenario("admin-folder/login", "", autoRenameOnCollision = true)
+        assertEquals(MoveStatus.SUCCESS, moveCollision.status)
+        assertEquals("login_1", moveCollision.newRelativePath)
+        assertTrue(moveCollision.renamedDueToCollision)
+        assertEquals("login_1", repo.loadScenario("login_1")?.name)
+
+        // 6. Move folder into another folder + block circular move (folder into itself or descendant)
+        val subMove = repo.moveFolder("empty-folder", "auth-folder")
+        assertEquals(MoveStatus.SUCCESS, subMove.status)
+        assertEquals("auth-folder/empty-folder", subMove.newRelativePath)
+
+        val circularSelf = repo.moveFolder("auth-folder", "auth-folder")
+        assertEquals(MoveStatus.CIRCULAR_MOVE, circularSelf.status)
+        val circularChild = repo.moveFolder("auth-folder", "auth-folder/empty-folder")
+        assertEquals(MoveStatus.CIRCULAR_MOVE, circularChild.status)
+
+        // 7. Folder rename + active scenario path remapping + sibling order persistence
+        assertEquals(RenameStatus.SUCCESS, repo.createScenario("auth-folder/empty-folder", "health-check", "http://localhost:8080").status)
+        val folderRename = repo.renameFolder("auth-folder", "member-auth", "회원 인증 그룹")
+        assertEquals(RenameStatus.SUCCESS, folderRename.status)
+        assertEquals("member-auth", folderRename.folderPath)
+        val remapped = ScenarioFileRepository.remapPathAfterFolderChange("auth-folder/empty-folder/health-check", "auth-folder", "member-auth")
+        assertEquals("member-auth/empty-folder/health-check", remapped)
+        assertNotNull(repo.loadScenario(remapped))
+        assertEquals("회원 인증 그룹", repo.loadFolderMetadata("member-auth").description)
+
+        repo.updateSiblingOrder("", listOf("S:login", "F:member-auth", "S:AIR_APP_LegacyOpen"))
+        assertEquals(listOf("S:login", "F:member-auth", "S:AIR_APP_LegacyOpen"), repo.loadFolderMetadata("").order)
+        assertTrue(refreshedFiles.isNotEmpty())
     }
 }
