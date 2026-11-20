@@ -4,9 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.util.UUID
 
-// [v0.3.0] 시나리오 설명(description) 필드 및 폴더 메타데이터(FolderMetadata)·트리 탐색 스냅샷 모델 추가
-// 변경 의도: 기존 .maekom/scenarios/*.json 파일과의 100% 하위 호환성(기본값 + ignoreUnknown)을 유지하며
-//          폴더 기반 트리 구조, 빈 폴더 보존, Base Info(Name/Description) 편집 및 동일 레벨 정렬 순서를 지원
+// [v0.3.2] 환경 프로필 보호 모드(confirmBeforeRun), 스텝 별칭(alias) 및 실행 전 대기 시간(delayMs) 선택 필드 추가
+// 변경 의도: 기존 .maekom/scenarios/*.json 및 environments.json과 100% 하위 호환(기본값 + ignoreUnknown)을 유지하면서
+//          PRD 실수 실행 방지, 스텝 목록 가독성 향상 및 스텝 간 지연 실행을 지원
 
 enum class HttpMethod {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS;
@@ -41,7 +41,8 @@ enum class ScenarioStatus {
 data class EnvironmentProfile(
     var name: String = "Local",
     var baseUrl: String = "http://localhost:8080",
-    var builtInLocal: Boolean = false
+    var builtInLocal: Boolean = false,
+    var confirmBeforeRun: Boolean = false
 ) {
     fun deepCopy(): EnvironmentProfile = copy()
 }
@@ -100,6 +101,8 @@ data class ExtractRule(
 data class ApiStep(
     var id: String = UUID.randomUUID().toString(),
     var name: String = "",
+    var alias: String = "",
+    var delayMs: Long = 0L,
     var enabled: Boolean = true,
     var method: String = "GET",
     var url: String = "/",
@@ -112,6 +115,8 @@ data class ApiStep(
     fun deepCopy(): ApiStep = ApiStep(
         id = UUID.randomUUID().toString(),
         name = name,
+        alias = alias,
+        delayMs = delayMs,
         enabled = enabled,
         method = method,
         url = url,
@@ -124,8 +129,9 @@ data class ApiStep(
 
     @JsonIgnore
     fun displayTitle(): String {
-        val label = name.takeIf { it.isNotBlank() } ?: url.ifBlank { "/" }
-        return label
+        return alias.takeIf { it.isNotBlank() }
+            ?: name.takeIf { it.isNotBlank() }
+            ?: url.ifBlank { "/" }
     }
 }
 

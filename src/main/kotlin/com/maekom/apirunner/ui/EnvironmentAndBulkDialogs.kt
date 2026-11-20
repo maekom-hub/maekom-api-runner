@@ -5,6 +5,7 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
@@ -21,6 +22,7 @@ import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.EnvironmentProfile
 import com.maekom.apirunner.model.GlobalVariableItem
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
@@ -33,10 +35,12 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.table.DefaultTableModel
 
-// [v0.2.0] BaseURL 환경 프로필(Local/DEV/STG/PRD) 관리 다이얼로그 및 JSON 일괄 입력(Bulk Import) 다이얼로그 구현
-// 변경 의도: 시나리오 전환과 무관하게 프로젝트 환경별 BaseURL을 영속 관리하고, 변수·시크릿을 JSON으로 대량 등록/병합
+// [v0.3.2] 환경 프로필 보호 모드(confirmBeforeRun: 실행 전 확인 팝업, PRD 기본 활성화) 설정 UI 추가
+// 변경 의도: PRD 등 운영 환경에서 실수로 API를 실행하는 사고를 사전 차단하기 위해 환경 프로필 단위 보호 모드 지원
 
 /**
  * Dialog for adding, editing, and deleting project-wide BaseURL environment profiles
@@ -51,7 +55,11 @@ class EnvironmentManagerDialog(
     private val profiles: MutableList<EnvironmentProfile> = initialProfiles.map { it.deepCopy() }.toMutableList()
 
     private val tableModel = object : DefaultTableModel(
-        arrayOf<Any>(I18nManager.t("env.col.name"), I18nManager.t("env.col.url")),
+        arrayOf<Any>(
+            I18nManager.t("env.col.name"),
+            I18nManager.t("env.col.url"),
+            I18nManager.t("env.col.protect")
+        ),
         0
     ) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
@@ -80,8 +88,9 @@ class EnvironmentManagerDialog(
             setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
             rowHeight = 25
             tableHeader.reorderingAllowed = false
-            columnModel.getColumn(0).preferredWidth = 140
-            columnModel.getColumn(1).preferredWidth = 440
+            columnModel.getColumn(0).preferredWidth = 120
+            columnModel.getColumn(1).preferredWidth = 370
+            columnModel.getColumn(2).preferredWidth = 110
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
                     if (e.clickCount == 2 && selectedRow in profiles.indices) {
@@ -167,7 +176,8 @@ class EnvironmentManagerDialog(
     private fun reloadTable() {
         tableModel.rowCount = 0
         for (p in profiles) {
-            tableModel.addRow(arrayOf<Any>(p.name, p.baseUrl))
+            val protectLabel = if (p.confirmBeforeRun) I18nManager.t("env.protect.on") else "-"
+            tableModel.addRow(arrayOf<Any>(p.name, p.baseUrl, protectLabel))
         }
     }
 
@@ -186,6 +196,14 @@ private class EnvironmentProfileEditDialog(
         isEnabled = !isLocalProfile
     }
     private val urlField = JBTextField(existing?.baseUrl.orEmpty(), 34)
+    private val confirmBeforeRunCheckbox = JBCheckBox(
+        I18nManager.t("env.editDialog.confirmBeforeRun"),
+        existing?.confirmBeforeRun ?: false
+    ).apply {
+        foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+        font = font.deriveFont(Font.BOLD)
+    }
+    private var userToggledConfirm = existing != null
 
     init {
         title = if (existing == null) {
@@ -195,6 +213,18 @@ private class EnvironmentProfileEditDialog(
         }
         setOKButtonText(I18nManager.t("global.save"))
         setCancelButtonText(I18nManager.t("global.cancel"))
+        confirmBeforeRunCheckbox.addActionListener { userToggledConfirm = true }
+        // [v0.3.2] 신규 프로필 이름이 PRD인 경우 보호 모드 기본 활성화 강조
+        nameField.document.addDocumentListener(object : DocumentListener {
+            private fun autoSuggestPrd() {
+                if (!userToggledConfirm && nameField.text.trim().equals("PRD", ignoreCase = true)) {
+                    confirmBeforeRunCheckbox.isSelected = true
+                }
+            }
+            override fun insertUpdate(e: DocumentEvent?) = autoSuggestPrd()
+            override fun removeUpdate(e: DocumentEvent?) = autoSuggestPrd()
+            override fun changedUpdate(e: DocumentEvent?) = autoSuggestPrd()
+        })
         init()
     }
 
@@ -217,6 +247,9 @@ private class EnvironmentProfileEditDialog(
         gbc.gridx = 1; gbc.weightx = 1.0
         panel.add(urlField, gbc)
 
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 2; gbc.weightx = 1.0
+        panel.add(confirmBeforeRunCheckbox, gbc)
+
         return panel
     }
 
@@ -237,7 +270,8 @@ private class EnvironmentProfileEditDialog(
     fun toProfile(): EnvironmentProfile = EnvironmentProfile(
         name = nameField.text.trim(),
         baseUrl = urlField.text.trim(),
-        builtInLocal = isLocalProfile
+        builtInLocal = isLocalProfile,
+        confirmBeforeRun = confirmBeforeRunCheckbox.isSelected
     )
 }
 

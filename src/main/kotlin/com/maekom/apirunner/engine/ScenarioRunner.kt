@@ -13,8 +13,11 @@ import com.maekom.apirunner.model.StepStatus
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+// [v0.3.2] 스텝 실행 전 취소 가능 지연(delayMs) 및 시크릿 마스킹이 적용된 [Resolved Request] 로그 콜백 추가
+// 변경 의도: 비동기 후처리 대기(delayMs) 중에도 중지 버튼에 즉시 응답하고, 전송 직전 치환 완료된 요청 전문을 안전하게 확인
 interface ScenarioRunListener {
     fun onStepStarted(stepIndex: Int, step: ApiStep) {}
+    fun onStepRequestResolved(stepIndex: Int, step: ApiStep, resolvedRequestLog: String) {}
     fun onStepCompleted(result: StepExecutionResult) {}
     fun onScenarioCompleted(summary: ScenarioExecutionSummary) {}
 }
@@ -100,7 +103,8 @@ class ScenarioRunner(
                 scenario = scenario,
                 runtimeContext = runtimeContext,
                 secrets = secrets,
-                effectiveGlobals = effectiveGlobals
+                effectiveGlobals = effectiveGlobals,
+                onRequestResolved = { logBlock -> listener?.onStepRequestResolved(index, step, logBlock) }
             )
             results.add(result)
             listener?.onStepCompleted(result)
@@ -130,7 +134,8 @@ class ScenarioRunner(
         scenario: ApiScenario,
         secrets: Map<String, String> = emptyMap(),
         runtimeContext: MutableMap<String, String> = linkedMapOf(),
-        projectGlobalVariables: Map<String, String> = emptyMap()
+        projectGlobalVariables: Map<String, String> = emptyMap(),
+        onRequestResolved: ((String) -> Unit)? = null
     ): StepExecutionResult {
         cancelled.set(false)
         val effectiveGlobals = mergeGlobalVariables(scenario.globalVariables, projectGlobalVariables)
@@ -140,7 +145,8 @@ class ScenarioRunner(
             scenario = scenario,
             runtimeContext = runtimeContext,
             secrets = secrets,
-            effectiveGlobals = effectiveGlobals
+            effectiveGlobals = effectiveGlobals,
+            onRequestResolved = onRequestResolved
         )
     }
 
@@ -160,8 +166,21 @@ class ScenarioRunner(
         scenario: ApiScenario,
         runtimeContext: MutableMap<String, String>,
         secrets: Map<String, String>,
-        effectiveGlobals: Map<String, String>
+        effectiveGlobals: Map<String, String>,
+        onRequestResolved: ((String) -> Unit)? = null
     ): StepExecutionResult {
+        // [v0.3.2] 스텝 실행 전 대기 시간(delayMs > 0): 백그라운드 스레드에서 50ms 단위로 분할 대기하여 중지 시 즉시 취소
+        if (step.delayMs > 0L) {
+            if (!sleepCancellable(step.delayMs)) {
+                return StepExecutionResult(
+                    stepId = step.id,
+                    stepIndex = stepIndex,
+                    status = StepStatus.FAILED,
+                    failureReason = "사용자에 의해 실행이 중단되었습니다."
+                )
+            }
+        }
+
         val resolvedBaseUrl = VariableResolver.resolve(
             template = scenario.baseUrl,
             runtimeContext = runtimeContext,
@@ -203,6 +222,19 @@ class ScenarioRunner(
             headers = resolvedHeaders,
             body = resolvedBody
         )
+
+        // [v0.3.2] 전송 직전 시크릿 마스킹이 적용된 [Resolved Request] 로그 블록 생성 및 실시간 출력 콜백 호출
+        val secretHeaderKeys = scenario.commonHeaders
+            .filter { it.enabled && it.secret && it.key.trim().isNotEmpty() }
+            .map { it.key.trim().lowercase() }
+            .toSet()
+        val secretValues = buildList {
+            secrets.values.filter { it.isNotEmpty() }.forEach { add(it) }
+            scenario.commonHeaders
+                .filter { it.enabled && it.secret && it.value.isNotEmpty() }
+                .forEach { add(it.value) }
+        }
+        onRequestResolved?.invoke(formatResolvedRequestLog(snapshot, secretHeaderKeys, secretValues))
 
         val response = httpExecutor.execute(snapshot, ignoreSsl = scenario.ignoreSsl)
 
@@ -308,7 +340,60 @@ class ScenarioRunner(
         }
     }
 
+    private fun sleepCancellable(delayMs: Long): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delayMs)
+        while (true) {
+            if (cancelled.get() || Thread.currentThread().isInterrupted) return false
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            if (remainingMs <= 0L) return true
+            try {
+                Thread.sleep(minOf(remainingMs, 50L))
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+    }
+
     companion object {
+        // [v0.3.2] 시크릿 헤더 키 및 로컬 시크릿 값을 '****'로 마스킹한 [Resolved Request] 로그 포맷터
+        fun formatResolvedRequestLog(
+            snapshot: HttpRequestSnapshot,
+            secretHeaderKeys: Set<String> = emptySet(),
+            secretValues: Collection<String> = emptyList()
+        ): String = buildString {
+            val normalizedSecretKeys = secretHeaderKeys.map { it.trim().lowercase() }.toSet()
+            val nonEmptySecrets = secretValues
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .sortedByDescending { it.length }
+
+            fun maskText(raw: String): String {
+                var masked = raw
+                for (secret in nonEmptySecrets) {
+                    if (masked.contains(secret)) {
+                        masked = masked.replace(secret, "****")
+                    }
+                }
+                return masked
+            }
+
+            appendLine("[Resolved Request]")
+            appendLine("Method : ${snapshot.method}")
+            appendLine("URL    : ${maskText(snapshot.url)}")
+            if (snapshot.headers.isNotEmpty()) {
+                appendLine("Headers:")
+                for ((k, v) in snapshot.headers) {
+                    val displayVal = if (k.trim().lowercase() in normalizedSecretKeys) "****" else maskText(v)
+                    appendLine("  $k: $displayVal")
+                }
+            }
+            if (snapshot.body.isNotBlank()) {
+                appendLine("Body:")
+                appendLine(maskText(snapshot.body))
+            }
+        }.trimEnd()
+
         fun matchesExpectedStatus(actualStatus: Int, expectedExpr: String): Boolean {
             val normalized = expectedExpr.trim()
             if (normalized.isEmpty()) {

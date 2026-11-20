@@ -18,6 +18,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.3.2</h3>
+    <ul>
+      <li><b><code>[Resolved Request]</code> Masked Logging:</b> Prints the final resolved Method, URL, Headers, and Body right before execution while automatically masking <code>Secret</code> headers and local secrets as <code>****</code>.</li>
+      <li><b>Step <code>Alias</code> &amp; Cancellable <code>Delay (ms)</code>:</b> Shows <code>[Alias] POST /path</code> in the step list and supports cancellable pre-request delays without blocking the UI thread.</li>
+      <li><b>Protected Environment Mode (<code>PRD</code> Guard):</b> Highlights protected environments in red and displays a confirmation dialog before single-step or full-scenario execution.</li>
+    </ul>
     <h3>v0.3.1</h3>
     <ul>
       <li><b>Common Header Fallback for Blank Step Headers:</b> When an individual step header has a blank/<code>null</code> value, it now automatically falls back to the matching enabled Common Header (case-insensitive) with full variable resolution across single-step execution, full-scenario execution, and <code>Copy cURL</code>.</li>

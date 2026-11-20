@@ -16,8 +16,10 @@ import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
 import com.maekom.apirunner.model.CommonHeaderItem
+import com.maekom.apirunner.model.EnvironmentProfile
 import com.maekom.apirunner.model.ExtractRule
 import com.maekom.apirunner.model.GlobalVariableItem
+import com.maekom.apirunner.model.HttpRequestSnapshot
 import com.maekom.apirunner.model.QueryParamItem
 import com.maekom.apirunner.model.ScenarioStatus
 import com.maekom.apirunner.model.StepStatus
@@ -660,5 +662,60 @@ class MaekomEngineTest {
         assertEquals("확인", i18n.translate("explorer.ok"))
         i18n.toggleLanguage()
         assertEquals("OK", i18n.translate("explorer.ok"))
+    }
+
+    // [v0.3.2] Resolved Request 시크릿 마스킹, alias/delayMs/confirmBeforeRun 하위 호환성 및 delay 중 즉시 취소 검증
+    @Test
+    fun `resolved request masks secrets, legacy models deserialize safely, and delay is cancellable`() {
+        // 1. Secret masking in [Resolved Request]
+        val snapshot = HttpRequestSnapshot(
+            method = "POST",
+            url = "https://api.example.com/v1/login?key=my-local-secret",
+            headers = linkedMapOf(
+                "Content-Type" to "application/json",
+                "X-Api-Key" to "top-secret-header",
+                "Authorization" to "Bearer my-local-secret"
+            ),
+            body = """{"password":"my-local-secret","user":"alice"}"""
+        )
+        val log = ScenarioRunner.formatResolvedRequestLog(
+            snapshot = snapshot,
+            secretHeaderKeys = setOf("x-api-key"),
+            secretValues = listOf("my-local-secret")
+        )
+        assertTrue(log.startsWith("[Resolved Request]"), "log=$log")
+        assertTrue(log.contains("X-Api-Key: ****"), "log=$log")
+        assertTrue(log.contains("Authorization: Bearer ****"), "log=$log")
+        assertTrue(log.contains("key=****"), "log=$log")
+        assertTrue(log.contains("\"password\":\"****\""), "log=$log")
+        assertFalse(log.contains("my-local-secret"), "log=$log")
+        assertFalse(log.contains("top-secret-header"), "log=$log")
+
+        // 2. Legacy JSON without alias, delayMs, confirmBeforeRun deserializes with safe defaults
+        val mapper = jacksonObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+        val env = mapper.readValue("""{"name":"PRD","baseUrl":"https://prd.example.com"}""", EnvironmentProfile::class.java)
+        assertFalse(env.confirmBeforeRun)
+        val step = mapper.readValue("""{"method":"POST","url":"/api/pay"}""", ApiStep::class.java)
+        assertEquals("", step.alias)
+        assertEquals(0L, step.delayMs)
+
+        // 3. Cancellable delayMs stops promptly when runner.stop() is invoked
+        val runner = ScenarioRunner()
+        val stopper = Thread {
+            Thread.sleep(100)
+            runner.stop()
+        }
+        val startMs = System.currentTimeMillis()
+        stopper.start()
+        val result = runner.runSingleStep(
+            step = ApiStep(name = "Delayed", alias = "결제대기", delayMs = 5_000L, method = "GET", url = "http://127.0.0.1:1/never"),
+            stepIndex = 0,
+            scenario = ApiScenario(name = "delay-test", baseUrl = "http://127.0.0.1:1")
+        )
+        stopper.join(1000)
+        val elapsedMs = System.currentTimeMillis() - startMs
+        assertEquals(StepStatus.FAILED, result.status)
+        assertTrue(elapsedMs < 2_000L, "Expected prompt cancellation during delay, elapsed=${elapsedMs}ms")
     }
 }

@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.3.1] 공통 헤더 빈 값 폴백 안내 문구 보강 및 시나리오 관리 다이얼로그 확인 버튼명('확인'/'OK') 통일
-// 변경 의도: 개별 스텝 헤더 빈 값 시 공통 헤더 자동 대체 동작을 명확히 안내하고 다이얼로그 확인 버튼 표기를 간결하게 정비
+// [v0.3.2] 스텝 별칭(Alias), 실행 전 대기 시간(Delay ms), 환경 보호 모드(PRD 확인 팝업) KO/EN 다국어 문구 추가
+// 변경 의도: v0.3.2 신규 UX·안전장치 UI 컴포넌트와 경고 다이얼로그를 한국어/영어 양국어 번들에 완벽 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -155,6 +155,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "env.dialog.hint" to "환경별 BaseURL 프로필(.maekom/environments.json)을 관리합니다. 시나리오를 전환해도 초기화되지 않고 유지됩니다. (Local은 application.yml/properties 포트를 자동 감지합니다.)",
             "env.col.name" to "환경명",
             "env.col.url" to "BaseURL",
+            "env.col.protect" to "보호 모드",
+            "env.protect.on" to "🛡️ 보호 ON",
+            "env.protect.badge" to "🛡️ 보호 환경",
+            "env.editDialog.confirmBeforeRun" to "보호 모드 (실행 전 확인 팝업 표시 — PRD 권장)",
+            "env.protect.confirmTitle" to "보호 환경 실행 확인",
+            "env.protect.confirmMsg" to "⚠️ 보호 모드가 활성화된 환경('[%s]')에서 %s을(를) 실행하시겠습니까?\n\nBaseURL: %s",
+            "env.protect.targetScenario" to "전체 시나리오",
+            "env.protect.targetStep" to "단건 API 스텝",
             "env.add" to "+ 환경 추가",
             "env.edit" to "✎ 수정",
             "env.delete" to "- 삭제",
@@ -210,6 +218,10 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "steps.addEmpty" to "+ 빈 스텝",
 
             // Center Pane (Editor)
+            "editor.alias" to "스텝 별칭:",
+            "editor.alias.tooltip" to "좌측 실행 스텝 목록에 '[별칭] POST /path' 형태로 표시할 스텝 별칭 (선택)",
+            "editor.delay" to "대기(ms):",
+            "editor.delay.tooltip" to "이 스텝 실행 직전 대기할 시간(밀리초, 기본 0 — 대기 중 중지 가능)",
             "editor.expectedStatus" to "기대 상태:",
             "editor.expectedStatus.tooltip" to "기대 HTTP 상태코드 (예: 2xx, 200, 200,201, 200..299)",
             "editor.runSingle" to "▶ 단건 실행",
@@ -591,6 +603,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "env.dialog.hint" to "Manage per-environment BaseURL profiles (.maekom/environments.json). Preserved across scenario switches. ('Local' auto-detects server.port from application.yml/properties.)",
             "env.col.name" to "Environment",
             "env.col.url" to "BaseURL",
+            "env.col.protect" to "Protection",
+            "env.protect.on" to "🛡️ Protected",
+            "env.protect.badge" to "🛡️ Protected Env",
+            "env.editDialog.confirmBeforeRun" to "Protection Mode (Confirm before running — recommended for PRD)",
+            "env.protect.confirmTitle" to "Confirm Protected Environment Execution",
+            "env.protect.confirmMsg" to "⚠️ Are you sure you want to run %s against protected environment '[%s]'?\n\nBaseURL: %s",
+            "env.protect.targetScenario" to "the full scenario",
+            "env.protect.targetStep" to "this single API step",
             "env.add" to "+ Add Env",
             "env.edit" to "✎ Edit",
             "env.delete" to "- Delete",
@@ -646,6 +666,10 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "steps.addEmpty" to "+ Empty Step",
 
             // Center Pane (Editor)
+            "editor.alias" to "Step Alias:",
+            "editor.alias.tooltip" to "Optional alias shown as '[Alias] POST /path' in the step list",
+            "editor.delay" to "Delay(ms):",
+            "editor.delay.tooltip" to "Milliseconds to wait before sending this step (default 0, cancellable)",
             "editor.expectedStatus" to "Expected:",
             "editor.expectedStatus.tooltip" to "Expected HTTP status (e.g. 2xx, 200, 200,201, 200..299)",
             "editor.runSingle" to "▶ Run Step",

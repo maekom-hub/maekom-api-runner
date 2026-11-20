@@ -163,9 +163,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val stopBtn = JButton()
 
     // --- Environment Profile Controls (BaseURL 행 앞쪽 배치) ---
+    private val baseUrlBarPanel = JPanel(GridBagLayout())
     private val envComboModel = DefaultComboBoxModel<String>()
     private val envComboBox = ComboBox(envComboModel)
     private val envManageBtn = JButton()
+    private val envProtectBadgeLabel = JBLabel()
     private val baseUrlLabel = JBLabel()
     private val baseUrlField = JBTextField(16)
     private val ignoreSslCheckbox = JBCheckBox()
@@ -187,10 +189,14 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val addEmptyStepBtn = JButton()
 
     // --- Center Pane: Step Detail Editor ---
+    private val stepAliasLabel = JBLabel()
+    private val stepAliasField = JBTextField()
     private val methodComboBox = ComboBox(HttpMethod.entries.map { it.name }.toTypedArray())
     private val urlField = JBTextField()
     private val expectedStatusLabel = JBLabel()
-    private val expectedStatusField = JBTextField("2xx", 6)
+    private val expectedStatusField = JBTextField("2xx", 5)
+    private val delayLabel = JBLabel()
+    private val delayField = JBTextField("0", 5)
     private val runSingleBtn = JButton()
     private val editorTabs = JBTabbedPane()
 
@@ -582,13 +588,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val panel = JPanel(BorderLayout(0, 6))
         panel.border = JBUI.Borders.empty(4)
 
-        // [v0.2.1] 요청 기본 환경 바(1행) 재배치: [Local ▾] → BaseURL 입력창 → [SSL 무시] → [⚙] 톱니바퀴 아이콘 전용 버튼
-        // 변경 의도: BaseURL 입력 가용 폭을 넓히고 환경 관리 버튼을 우측 끝 컴팩트 아이콘 버튼으로 정돈
-        val baseUrlBar = JPanel(GridBagLayout())
+        // [v0.3.2] 요청 기본 환경 바(1행: 보호 모드 붉은 강조 지원) + 스텝 별칭 행(2행) + Method/URL/기대 상태/대기(ms) 행(3행)
+        // 변경 의도: PRD 보호 모드 시각적 경고, 스텝 별칭 편집, 스텝 실행 전 대기(ms) 설정을 요청 편집기 상단에 직관적으로 배치
         envComboBox.minimumSize = Dimension(94, 28)
         envComboBox.preferredSize = Dimension(114, 28)
         baseUrlField.minimumSize = Dimension(120, 28)
         baseUrlField.preferredSize = Dimension(240, 28)
+        envProtectBadgeLabel.apply {
+            foreground = JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50))
+            font = font.deriveFont(Font.BOLD, 11.5f)
+            isVisible = false
+        }
 
         envManageBtn.apply {
             text = ""
@@ -601,7 +611,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         // 1) [Local ▾] 환경 선택 셀렉트박스
-        baseUrlBar.add(
+        baseUrlBarPanel.add(
             envComboBox,
             GridBagConstraints().apply {
                 gridx = 0; gridy = 0; weightx = 0.0
@@ -610,7 +620,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             }
         )
         // 2) BaseURL: [입력 필드]
-        baseUrlBar.add(
+        baseUrlBarPanel.add(
             baseUrlLabel,
             GridBagConstraints().apply {
                 gridx = 1; gridy = 0; weightx = 0.0
@@ -618,7 +628,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 insets = JBUI.insetsRight(6)
             }
         )
-        baseUrlBar.add(
+        baseUrlBarPanel.add(
             baseUrlField,
             GridBagConstraints().apply {
                 gridx = 2; gridy = 0; weightx = 1.0
@@ -626,32 +636,50 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 anchor = GridBagConstraints.WEST
             }
         )
-        // 3) [ ] SSL 무시 체크박스
-        baseUrlBar.add(
-            ignoreSslCheckbox,
+        // 2.5) [🛡️ 보호 환경] 뱃지 (보호 모드 활성 시 표시)
+        baseUrlBarPanel.add(
+            envProtectBadgeLabel,
             GridBagConstraints().apply {
                 gridx = 3; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.EAST
                 insets = JBUI.insetsLeft(8)
             }
         )
-        // 4) [⚙] 환경 프로필 관리 아이콘 전용 버튼
-        baseUrlBar.add(
-            envManageBtn,
+        // 3) [ ] SSL 무시 체크박스
+        baseUrlBarPanel.add(
+            ignoreSslCheckbox,
             GridBagConstraints().apply {
                 gridx = 4; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsLeft(8)
+            }
+        )
+        // 4) [⚙] 환경 프로필 관리 아이콘 전용 버튼
+        baseUrlBarPanel.add(
+            envManageBtn,
+            GridBagConstraints().apply {
+                gridx = 5; gridy = 0; weightx = 0.0
                 anchor = GridBagConstraints.EAST
                 insets = JBUI.insetsLeft(4)
             }
         )
 
+        val aliasRow = JPanel(BorderLayout(6, 0)).apply {
+            stepAliasField.preferredSize = Dimension(200, 26)
+            add(stepAliasLabel, BorderLayout.WEST)
+            add(stepAliasField, BorderLayout.CENTER)
+        }
+
         val requestLineBar = JPanel(BorderLayout(6, 4))
         methodComboBox.preferredSize = Dimension(88, 28)
 
         val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        expectedStatusField.preferredSize = Dimension(58, 28)
+        expectedStatusField.preferredSize = Dimension(52, 28)
+        delayField.preferredSize = Dimension(56, 28)
         rightControls.add(expectedStatusLabel)
         rightControls.add(expectedStatusField)
+        rightControls.add(delayLabel)
+        rightControls.add(delayField)
         rightControls.add(runSingleBtn)
 
         requestLineBar.add(methodComboBox, BorderLayout.WEST)
@@ -659,7 +687,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         requestLineBar.add(rightControls, BorderLayout.EAST)
 
         val requestHeaderContainer = JPanel(BorderLayout(0, 4)).apply {
-            add(baseUrlBar, BorderLayout.NORTH)
+            add(baseUrlBarPanel, BorderLayout.NORTH)
+            add(aliasRow, BorderLayout.CENTER)
             add(requestLineBar, BorderLayout.SOUTH)
         }
 
@@ -1020,9 +1049,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         // Center Pane auto-sync to step model
+        stepAliasField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         methodComboBox.addActionListener { if (!isUpdatingUi) syncEditorToCurrentStep() }
         urlField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         expectedStatusField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
+        delayField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         bodyTextArea.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
 
         paramsTableModel.addTableModelListener { e ->
@@ -1340,6 +1371,51 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         } finally {
             isUpdatingUi = false
         }
+        updateEnvironmentProtectionStyle()
+    }
+
+    // [v0.3.2] 보호 모드(confirmBeforeRun=true) 환경 선택 시 상단 환경 바를 붉은색 경고 스타일로 강조
+    private fun updateEnvironmentProtectionStyle() {
+        val activeProfile = getActiveEnvironmentProfile()
+        val isProtected = activeProfile?.confirmBeforeRun == true
+        envProtectBadgeLabel.isVisible = isProtected
+        if (isProtected) {
+            baseUrlBarPanel.isOpaque = true
+            baseUrlBarPanel.background = JBColor(Color(0xFF, 0xEB, 0xEE), Color(0x4A, 0x1F, 0x24))
+            baseUrlBarPanel.border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor(Color(0xC6, 0x28, 0x28), Color(0xEF, 0x53, 0x50)), 1, true),
+                JBUI.Borders.empty(2, 6, 2, 6)
+            )
+        } else {
+            baseUrlBarPanel.isOpaque = false
+            baseUrlBarPanel.border = JBUI.Borders.empty()
+        }
+        baseUrlBarPanel.revalidate()
+        baseUrlBarPanel.repaint()
+    }
+
+    private fun getActiveEnvironmentProfile() =
+        environmentConfig.profiles.firstOrNull {
+            it.name.equals(environmentConfig.selectedEnvironment, ignoreCase = true)
+        }
+
+    // [v0.3.2] 보호 모드 환경에서 단건/전체 실행 클릭 시 실수 실행 차단을 위한 확인 팝업 표시
+    private fun confirmProtectedEnvironmentExecution(isFullScenario: Boolean): Boolean {
+        val activeProfile = getActiveEnvironmentProfile() ?: return true
+        if (!activeProfile.confirmBeforeRun) return true
+        val targetLabel = if (isFullScenario) {
+            I18nManager.t("env.protect.targetScenario")
+        } else {
+            I18nManager.t("env.protect.targetStep")
+        }
+        val effectiveBaseUrl = baseUrlField.text.trim().ifEmpty { activeProfile.baseUrl }
+        val choice = Messages.showYesNoDialog(
+            project,
+            I18nManager.t("env.protect.confirmMsg", activeProfile.name, targetLabel, effectiveBaseUrl),
+            I18nManager.t("env.protect.confirmTitle"),
+            Messages.getWarningIcon()
+        )
+        return choice == Messages.YES
     }
 
     private fun updateActiveEnvironmentProfileUrl(newUrl: String) {
@@ -1578,6 +1654,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         envManageBtn.text = ""
         envManageBtn.icon = AllIcons.General.GearPlain
         envManageBtn.toolTipText = I18nManager.t("env.manageBtn.tooltip")
+        envProtectBadgeLabel.text = I18nManager.t("env.protect.badge")
         baseUrlLabel.text = I18nManager.t("toolbar.baseUrl")
         baseUrlField.toolTipText = I18nManager.t("toolbar.baseUrl.tooltip")
         ignoreSslCheckbox.text = I18nManager.t("toolbar.ignoreSsl")
@@ -1613,8 +1690,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         deleteStepBtn.text = I18nManager.t("steps.delete")
         addEmptyStepBtn.text = I18nManager.t("steps.addEmpty")
 
+        stepAliasLabel.text = I18nManager.t("editor.alias")
+        stepAliasField.toolTipText = I18nManager.t("editor.alias.tooltip")
         expectedStatusLabel.text = I18nManager.t("editor.expectedStatus")
         expectedStatusField.toolTipText = I18nManager.t("editor.expectedStatus.tooltip")
+        delayLabel.text = I18nManager.t("editor.delay")
+        delayField.toolTipText = I18nManager.t("editor.delay.tooltip")
         runSingleBtn.text = I18nManager.t("editor.runSingle")
 
         editorTabs.setTitleAt(TAB_PARAMS, I18nManager.t("editor.tab.params"))
@@ -1892,6 +1973,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             refreshEditorFromSelection()
         }
         syncScenarioComboTooltip(currentScenarioPath)
+        updateEnvironmentProtectionStyle()
         lastAutoSavedTime = null
         markScenarioClean()
         scenarioStatusLabel.text = ""
@@ -2167,9 +2249,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         isUpdatingUi = true
         try {
             if (step == null) {
+                stepAliasField.text = ""
                 methodComboBox.selectedItem = "GET"
                 urlField.text = ""
                 expectedStatusField.text = "2xx"
+                delayField.text = "0"
                 paramsTableModel.rowCount = 0
                 headersTableModel.rowCount = 0
                 bodyTextArea.text = ""
@@ -2197,9 +2281,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun populateEditorFields(step: ApiStep) {
+        stepAliasField.text = step.alias
         methodComboBox.selectedItem = HttpMethod.fromString(step.method).name
         urlField.text = step.url
         expectedStatusField.text = step.expectedStatus.ifBlank { "2xx" }
+        delayField.text = step.delayMs.coerceAtLeast(0L).toString()
 
         paramsTableModel.rowCount = 0
         for (param in step.queryParams) {
@@ -2221,9 +2307,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun setEditorEnabled(enabled: Boolean) {
+        stepAliasField.isEnabled = enabled
         methodComboBox.isEnabled = enabled
         urlField.isEnabled = enabled
         expectedStatusField.isEnabled = enabled
+        delayField.isEnabled = enabled
         runSingleBtn.isEnabled = enabled && !isRunning
         paramsTable.isEnabled = enabled
         addParamBtn.isEnabled = enabled
@@ -2240,9 +2328,11 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     private fun syncEditorToCurrentStep() {
         val step = getActiveEditableStep() ?: return
+        step.alias = stepAliasField.text.trim()
         step.method = methodComboBox.selectedItem?.toString() ?: "GET"
         step.url = urlField.text
         step.expectedStatus = expectedStatusField.text.trim().ifEmpty { "2xx" }
+        step.delayMs = delayField.text.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 0L
         step.body = bodyTextArea.text
 
         val params = mutableListOf<QueryParamItem>()
@@ -2337,6 +2427,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             Messages.showInfoMessage(project, I18nManager.t("dialog.noSteps.msg"), "Maekom API Runner")
             return
         }
+        if (!confirmProtectedEnvironmentExecution(isFullScenario = true)) return
 
         isQuickSingleMode = false
         quickModeBanner.isVisible = false
@@ -2378,7 +2469,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     projectGlobalVariables = projectGlobals,
                     listener = object : ScenarioRunListener {
                         override fun onStepStarted(stepIndex: Int, step: ApiStep) {
-                            appendExecutionLog("\n[Step #${stepIndex + 1}] ▶ ${step.method.uppercase()} ${step.url} ...\n")
+                            val delayNote = if (step.delayMs > 0L) " (delay ${step.delayMs} ms)" else ""
+                            appendExecutionLog("\n[Step #${stepIndex + 1}] ▶ ${step.method.uppercase()} ${step.url}$delayNote ...\n")
                             ApplicationManager.getApplication().invokeLater {
                                 if (runGeneration.get() != generation || !isRunning) return@invokeLater
                                 stepStatuses[step.id] = StepStatus.RUNNING
@@ -2387,6 +2479,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                                 statusBadgeLabel.foreground = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6))
                                 revalidateNativeHeaderComponents()
                             }
+                        }
+
+                        override fun onStepRequestResolved(stepIndex: Int, step: ApiStep, resolvedRequestLog: String) {
+                            appendExecutionLog(resolvedRequestLog + "\n")
                         }
 
                         override fun onStepCompleted(result: StepExecutionResult) {
@@ -2493,6 +2589,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         syncEditorToCurrentStep()
 
         val activeStep = getActiveEditableStep() ?: return
+        if (!confirmProtectedEnvironmentExecution(isFullScenario = false)) return
         val selectedRowBeforeRun = if (isQuickSingleMode) -1 else stepTable.selectedRow
         val stepIndex = if (isQuickSingleMode) 0 else selectedRowBeforeRun.coerceAtLeast(0)
 
@@ -2528,7 +2625,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     scenario = scenarioSnapshot,
                     secrets = secrets,
                     runtimeContext = contextCopy,
-                    projectGlobalVariables = projectGlobals
+                    projectGlobalVariables = projectGlobals,
+                    onRequestResolved = { resolvedLog -> appendExecutionLog(resolvedLog + "\n") }
                 )
                 stepResult = res
                 appendExecutionLog(buildDetailLog(res) + "\n")
@@ -2820,10 +2918,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     .replace("&", "&amp;")
                     .replace("<", "&lt;")
                     .replace(">", "&gt;")
+                val aliasPrefix = step.alias.trim().takeIf { it.isNotEmpty() }?.let { rawAlias ->
+                    val escaped = rawAlias
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    "[$escaped] "
+                }.orEmpty()
                 if (!step.enabled) {
-                    "<html><span style='color:#9E9E9E'><s><b>$method</b> $pathEscaped</s></span></html>"
+                    "<html><span style='color:#9E9E9E'><s>$aliasPrefix<b>$method</b> $pathEscaped</s></span></html>"
                 } else {
-                    "<html><b style='color:$colorHex'>$method</b> $pathEscaped</html>"
+                    "<html>$aliasPrefix<b style='color:$colorHex'>$method</b> $pathEscaped</html>"
                 }
             } else {
                 ""

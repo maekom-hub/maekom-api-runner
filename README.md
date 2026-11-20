@@ -39,10 +39,11 @@
 2. **요청 추가:** Spring 컨트롤러 메서드 옆 **🌶️ 고추 아이콘**을 클릭해 단건 실행하거나 현재 시나리오에 스텝을 추가합니다.
 3. **체이닝 & 관리:** 응답 JSON에서 필드를 추출(`{{변수명}}`)해 다음 스텝에 연결하고, **`[시나리오 관리]`** 팝업에서 폴더별로 시나리오를 정리하세요.
 
-### 🆕 `v0.3.1` 최신 업데이트
+### 🆕 `v0.3.2` 최신 업데이트
 
-- **개별 스텝 헤더 빈 값 시 공통 헤더 자동 폴백:** 개별 스텝의 `Headers`에 동일 키가 존재하지만 값이 비어(`null`/공백) 있는 경우 활성 공통 헤더의 값으로 자동 대체(대소문자 무관, 변수 치환 및 `cURL 복사` 동일 적용)
-- **`시나리오 관리` 확인 버튼명 정리:** 하단 기본 버튼 텍스트를 `확인` / `OK`로 간결하게 통일
+- **최종 전송 요청(`[Resolved Request]`) 로그 출력:** 실행 직전 변수 치환·공통 헤더 폴백 병합이 완료된 Method/URL/Headers/Body를 실시간 로그에 출력하며, `Secret` 헤더 및 로컬 시크릿 값은 `****`로 자동 마스킹
+- **스텝 별칭(`Alias`) & 실행 전 대기 시간(`Delay ms`):** 좌측 스텝 목록에 `[별칭] POST /path` 표시 지원 및 백그라운드 취소 가능 지연 실행(`대기(ms)`) 추가
+- **환경 프로필 보호 모드(`PRD` 안전장치):** 보호 모드 활성 환경 선택 시 상단 환경 바 붉은색 강조 및 실행 전 확인 팝업 표시
 
 ---
 
@@ -62,10 +63,11 @@
 2. **Capture Endpoints:** Click the **🌶️ chili icon** next to any Spring controller method to run immediately or append to your scenario.
 3. **Chain & Organize:** Extract JSON response values into `{{variables}}` for subsequent steps and organize scenarios into folders via **`[Scenarios]`**.
 
-### 🆕 What's New in `v0.3.1`
+### 🆕 What's New in `v0.3.2`
 
-- **Common Header Fallback for Blank Step Headers:** When a step header key has a blank/`null` value, it automatically falls back to the matching enabled Common Header (case-insensitive, with full variable resolution across single/full execution and `Copy cURL`).
-- **Cleaner `Scenario Manager` OK Button:** Standardized the primary dialog button label to `OK` (`확인` in Korean).
+- **`[Resolved Request]` Live Logging with Secret Masking:** Logs the final resolved Method, URL, Headers, and Body right before sending, automatically masking `Secret` headers and local secret values as `****`.
+- **Step `Alias` & Cancellable Pre-Run `Delay (ms)`:** Displays `[Alias] POST /path` in the step list and supports cancellable background delays before executing a step.
+- **Environment Protection Mode (`PRD` Safety Guard):** Highlights protected environments in red on the BaseURL bar and prompts for confirmation before running.
 
 ---
 
@@ -76,6 +78,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.3.2` | 2026-11-20 | `[Resolved Request]` 시크릿 마스킹 로그 출력, 스텝 별칭(`Alias`), 실행 전 대기 시간(`Delay ms`, 중지 시 즉시 취소) 및 `PRD` 환경 보호 모드(붉은 강조·실행 전 확인 팝업) / `[Resolved Request]` masked logging, Step `Alias`, cancellable `Delay (ms)` & `PRD` environment protection mode | [maekom-api-runner-0.3.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.3.2/maekom-api-runner-0.3.2.zip) |
 | `v0.3.1` | 2026-11-20 | 개별 스텝 헤더 빈 값(`null`/공백) 시 활성 공통 헤더 자동 폴백 병합(단건/전체 실행·cURL 일관 적용) 및 `시나리오 관리` 확인 버튼명(`확인`/`OK`) 정리 / Auto-fallback to enabled Common Headers when step header value is blank across runner & cURL, and simplify Scenario Manager OK button label | [maekom-api-runner-0.3.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.3.1/maekom-api-runner-0.3.1.zip) |
 | `v0.3.0` | 2026-11-20 | 폴더·시나리오 트리 관리(`Scenario Manager`), 폴더/시나리오 양방향 드래그 앤 드롭, `Base Info`(`Name`/`Description`) 편집, 기존 루트 JSON 100% 하위 호환 및 `업데이트 확인` → `Settings > Plugins` 열기 수정 / Folder-based Scenario Manager with Drag & Drop, `Base Info` editor, 100% legacy compatibility & `Settings > Plugins` update button fix | [maekom-api-runner-0.3.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.3.0/maekom-api-runner-0.3.0.zip) |
 | `v0.2.2` | 2026-11-19 | 중복 커스텀 헤더 제거 및 IntelliJ 네이티브 ToolWindow 타이틀 바(`setTabActions`/`setTitleActions`) 직접 통합 / Mount title bar controls directly on IntelliJ native ToolWindow header | [maekom-api-runner-0.2.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.2.2/maekom-api-runner-0.2.2.zip) |
