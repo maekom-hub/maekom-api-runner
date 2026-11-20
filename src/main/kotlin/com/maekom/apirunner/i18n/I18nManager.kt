@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.3.0] 시나리오 폴더·트리 관리 팝업(ScenarioExplorerDialog) 및 Base Info 편집·드래그 앤 드롭 KO/EN 다국어 문구 추가
-// 변경 의도: 폴더 트리 탐색기, 아이콘 툴바, 이름 유효성 검사, 삭제 경고, 이동 안내 문구를 한국어/영어 양국어 번들에 완벽 동기화
+// [v0.3.1] 공통 헤더 빈 값 폴백 안내 문구 보강 및 시나리오 관리 다이얼로그 확인 버튼명('확인'/'OK') 통일
+// 변경 의도: 개별 스텝 헤더 빈 값 시 공통 헤더 자동 대체 동작을 명확히 안내하고 다이얼로그 확인 버튼 표기를 간결하게 정비
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -481,7 +481,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.save" to "저장",
             "global.cancel" to "취소",
             "global.tab.headers" to "공통 헤더 (Common Headers)",
-            "global.tab.headers.hint" to "모든 스텝에 자동 병합됩니다. 개별 스텝 헤더에 동일 키가 있으면 스텝 헤더가 우선 적용됩니다.",
+            "global.tab.headers.hint" to "모든 스텝에 자동 병합됩니다. 개별 스텝 헤더에 값이 있으면 우선 적용되며, 개별 값이 비어 있으면 공통 헤더 값으로 자동 대체됩니다.",
             "global.tab.vars" to "시나리오 변수 (Scenario Variables)",
             "global.tab.vars.hint" to "현재 시나리오 파일(.maekom/scenarios/*.json) 내부에 저장되는 전용 변수입니다. URL/헤더/본문에서 {{변수명}}으로 참조하세요.",
             "global.tab.secrets" to "🔒 로컬 시크릿 (secrets.local.json)",
@@ -501,7 +501,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // [v0.3.0] Scenario Explorer Dialog (Folder Tree + Base Info)
             "explorer.title" to "시나리오 관리 (Scenario Manager)",
-            "explorer.ok" to "열기 / 확인",
+            "explorer.ok" to "확인",
             "explorer.apply" to "적용 (Apply)",
             "explorer.cancel" to "닫기",
             "explorer.action.refresh" to "새로고침",
@@ -917,7 +917,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.save" to "Save",
             "global.cancel" to "Cancel",
             "global.tab.headers" to "Common Headers",
-            "global.tab.headers.hint" to "Automatically merged into all steps. Step-level headers override global headers on key collision.",
+            "global.tab.headers.hint" to "Automatically merged into all steps. Non-empty step headers take precedence; blank step header values automatically fall back to the enabled common header value.",
             "global.tab.vars" to "Scenario Variables",
             "global.tab.vars.hint" to "Stored inside the current scenario JSON (.maekom/scenarios/*.json). Reference via {{varName}} in URL/Headers/Body.",
             "global.tab.secrets" to "🔒 Local Secrets (secrets.local.json)",
@@ -937,7 +937,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
 
             // [v0.3.0] Scenario Explorer Dialog (Folder Tree + Base Info)
             "explorer.title" to "Scenario Manager",
-            "explorer.ok" to "Open / OK",
+            "explorer.ok" to "OK",
             "explorer.apply" to "Apply",
             "explorer.cancel" to "Close",
             "explorer.action.refresh" to "Refresh",

@@ -39,10 +39,10 @@
 2. **요청 추가:** Spring 컨트롤러 메서드 옆 **🌶️ 고추 아이콘**을 클릭해 단건 실행하거나 현재 시나리오에 스텝을 추가합니다.
 3. **체이닝 & 관리:** 응답 JSON에서 필드를 추출(`{{변수명}}`)해 다음 스텝에 연결하고, **`[시나리오 관리]`** 팝업에서 폴더별로 시나리오를 정리하세요.
 
-### 🆕 `v0.3.0` 최신 업데이트
+### 🆕 `v0.3.1` 최신 업데이트
 
-- **폴더 기반 시나리오 트리 관리 (`Scenario Manager`):** 기존 `.maekom/scenarios/*.json` 100% 하위 호환을 유지하며 폴더·시나리오 공존, 빈 폴더 보존, 아이콘 툴바, 폴더/시나리오 양방향 드래그 앤 드롭(빈 여백 = 루트 이동, 순환 이동·충돌 방어) 및 우측 `Base Info`(`Name`/`Description`) 편집 지원
-- **`업데이트 확인` 버튼 수정:** 네이티브 ToolWindow 타이틀 바의 업데이트 버튼 클릭 시 `ModalityState.any()`로 IntelliJ `Settings > Plugins` 창이 즉시 열리도록 개선
+- **개별 스텝 헤더 빈 값 시 공통 헤더 자동 폴백:** 개별 스텝의 `Headers`에 동일 키가 존재하지만 값이 비어(`null`/공백) 있는 경우 활성 공통 헤더의 값으로 자동 대체(대소문자 무관, 변수 치환 및 `cURL 복사` 동일 적용)
+- **`시나리오 관리` 확인 버튼명 정리:** 하단 기본 버튼 텍스트를 `확인` / `OK`로 간결하게 통일
 
 ---
 
@@ -62,10 +62,10 @@
 2. **Capture Endpoints:** Click the **🌶️ chili icon** next to any Spring controller method to run immediately or append to your scenario.
 3. **Chain & Organize:** Extract JSON response values into `{{variables}}` for subsequent steps and organize scenarios into folders via **`[Scenarios]`**.
 
-### 🆕 What's New in `v0.3.0`
+### 🆕 What's New in `v0.3.1`
 
-- **Folder-Based Scenario Tree (`Scenario Manager`):** 100% backward compatible with existing `.maekom/scenarios/*.json` root files; adds empty folder support, compact `AllIcons` toolbar, folder & scenario Drag & Drop (including root drop on empty space + circular/collision guards), and `Base Info` (`Name`/`Description`) editor.
-- **Reliable `Check Updates` Action:** Opens IntelliJ `Settings > Plugins` immediately using `ModalityState.any()` from the native ToolWindow title bar.
+- **Common Header Fallback for Blank Step Headers:** When a step header key has a blank/`null` value, it automatically falls back to the matching enabled Common Header (case-insensitive, with full variable resolution across single/full execution and `Copy cURL`).
+- **Cleaner `Scenario Manager` OK Button:** Standardized the primary dialog button label to `OK` (`확인` in Korean).
 
 ---
 
@@ -76,6 +76,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.3.1` | 2026-11-20 | 개별 스텝 헤더 빈 값(`null`/공백) 시 활성 공통 헤더 자동 폴백 병합(단건/전체 실행·cURL 일관 적용) 및 `시나리오 관리` 확인 버튼명(`확인`/`OK`) 정리 / Auto-fallback to enabled Common Headers when step header value is blank across runner & cURL, and simplify Scenario Manager OK button label | [maekom-api-runner-0.3.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.3.1/maekom-api-runner-0.3.1.zip) |
 | `v0.3.0` | 2026-11-20 | 폴더·시나리오 트리 관리(`Scenario Manager`), 폴더/시나리오 양방향 드래그 앤 드롭, `Base Info`(`Name`/`Description`) 편집, 기존 루트 JSON 100% 하위 호환 및 `업데이트 확인` → `Settings > Plugins` 열기 수정 / Folder-based Scenario Manager with Drag & Drop, `Base Info` editor, 100% legacy compatibility & `Settings > Plugins` update button fix | [maekom-api-runner-0.3.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.3.0/maekom-api-runner-0.3.0.zip) |
 | `v0.2.2` | 2026-11-19 | 중복 커스텀 헤더 제거 및 IntelliJ 네이티브 ToolWindow 타이틀 바(`setTabActions`/`setTitleActions`) 직접 통합 / Mount title bar controls directly on IntelliJ native ToolWindow header | [maekom-api-runner-0.2.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.2.2/maekom-api-runner-0.2.2.zip) |
 | `v0.2.1` | 2026-11-19 | `한국어 \| English` 세그먼트 스위치, `[⚙]` 환경 아이콘 버튼화 및 우측 정렬 `응답 변수 추출` 버튼 / Pill KO/EN switch, compact `[⚙]` env button & right-aligned Extract button | [maekom-api-runner-0.2.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.2.1/maekom-api-runner-0.2.1.zip) |

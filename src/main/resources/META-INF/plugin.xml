@@ -18,6 +18,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.3.1</h3>
+    <ul>
+      <li><b>Common Header Fallback for Blank Step Headers:</b> When an individual step header has a blank/<code>null</code> value, it now automatically falls back to the matching enabled Common Header (case-insensitive) with full variable resolution across single-step execution, full-scenario execution, and <code>Copy cURL</code>.</li>
+      <li><b>Scenario Manager OK Button:</b> Standardized the primary dialog button label to <code>확인</code> / <code>OK</code>.</li>
+    </ul>
     <h3>v0.3.0</h3>
     <ul>
       <li><b>Folder-Based Scenario Manager:</b> Added tree explorer dialog (<code>ScenarioExplorerDialog</code>) with compact <code>AllIcons</code> toolbar, empty folder preservation, bidirectional folder &amp; scenario Drag &amp; Drop (including root drop on empty space + circular/collision guards), and <code>Base Info</code> (<code>Name</code>/<code>Description</code>) editing with 100% backward compatibility for existing <code>.maekom/scenarios/*.json</code> files.</li>

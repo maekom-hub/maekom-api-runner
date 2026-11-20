@@ -125,12 +125,12 @@ object VariableResolver {
         return result
     }
 
-    /**
-     * Merges global headers with step headers. Step headers override global headers (case-insensitively).
-     */
+    // [v0.3.1] 개별 스텝 헤더 값이 null/빈 값(isBlank)일 때 활성 공통 헤더의 유효 값으로 자동 폴백(Fallback) 병합
+    // 변경 의도: 스텝 헤더에 키만 존재하고 값이 비어 있을 때 공통 헤더 값이 빈 문자열로 덮어써지는 문제를 방지하며,
+    //          단건 실행·전체 시나리오 실행·cURL 복사 모두 동일한 단일 병합 규칙(대소문자 무관 키 비교)을 적용
     fun mergeHeaders(
-        globalHeaders: Map<String, String>,
-        stepHeaders: Map<String, String>
+        globalHeaders: Map<String, String?>,
+        stepHeaders: Map<String, String?>
     ): LinkedHashMap<String, String> {
         val merged = linkedMapOf<String, String>()
         val lowerToActualKey = mutableMapOf<String, String>()
@@ -147,8 +147,21 @@ object VariableResolver {
             merged[trimmedKey] = v
         }
 
-        globalHeaders.forEach { (k, v) -> putHeader(k, v) }
-        stepHeaders.forEach { (k, v) -> putHeader(k, v) }
+        globalHeaders.forEach { (k, v) -> putHeader(k, v.orEmpty()) }
+        stepHeaders.forEach { (k, v) ->
+            val trimmedKey = k.trim()
+            if (trimmedKey.isEmpty()) return@forEach
+            val lower = trimmedKey.lowercase()
+            val existingKey = lowerToActualKey[lower]
+            val existingGlobalValue = existingKey?.let { merged[it] }
+            if (!v.isNullOrBlank()) {
+                putHeader(trimmedKey, v)
+            } else if (existingKey != null && !existingGlobalValue.isNullOrBlank()) {
+                // 개별 스텝 헤더 값이 비어 있고 활성 공통 헤더에 유효한 값이 있으면 공통 헤더 값으로 폴백 유지
+            } else {
+                putHeader(trimmedKey, v.orEmpty())
+            }
+        }
         return merged
     }
 

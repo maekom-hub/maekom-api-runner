@@ -611,4 +611,54 @@ class MaekomEngineTest {
         assertEquals(listOf("S:login", "F:member-auth", "S:AIR_APP_LegacyOpen"), repo.loadFolderMetadata("").order)
         assertTrue(refreshedFiles.isNotEmpty())
     }
+
+    // [v0.3.1] 개별 스텝 헤더 빈 값(null/공백) 시 활성 공통 헤더 자동 폴백 병합, 변수 치환 및 cURL 일관성 검증
+    @Test
+    fun `blank step headers fall back to enabled common headers case-insensitively across runner and curl`() {
+        val merged = VariableResolver.mergeHeaders(
+            globalHeaders = mapOf(
+                "svcNum" to "0100000000",
+                "X-Token" to "Bearer {{token}}",
+                "X-EmptyGlobal" to ""
+            ),
+            stepHeaders = mapOf(
+                "SVCNUM" to "   ",           // blank -> fallback to common header "0100000000"
+                "x-token" to null,           // null -> fallback to common header "Bearer {{token}}"
+                "X-EmptyGlobal" to "",       // both blank -> keep blank
+                "X-Custom" to "step-value"   // non-blank -> step takes precedence
+            )
+        )
+        assertEquals("0100000000", merged["svcNum"])
+        assertEquals("Bearer {{token}}", merged["X-Token"])
+        assertEquals("", merged["X-EmptyGlobal"])
+        assertEquals("step-value", merged["X-Custom"])
+
+        // Verify disabled common header does NOT fall back and cURL resolves variables in fallback header
+        val scenario = ApiScenario(
+            name = "header-fallback-test",
+            baseUrl = "http://localhost:8080",
+            commonHeaders = mutableListOf(
+                CommonHeaderItem(enabled = true, key = "svcNum", value = "{{phone}}", secret = false),
+                CommonHeaderItem(enabled = false, key = "X-Disabled", value = "should-not-apply", secret = false)
+            ),
+            globalVariables = linkedMapOf("phone" to "01012345678"),
+            steps = mutableListOf(
+                ApiStep(
+                    name = "Check",
+                    method = "GET",
+                    url = "/api/check",
+                    headers = linkedMapOf("SVCNUM" to "", "X-Disabled" to "")
+                )
+            )
+        )
+        val curl = CurlExporter.exportStep(scenario.steps[0], scenario)
+        assertTrue(curl.contains("-H 'svcNum: 01012345678'"), "curl=$curl")
+        assertFalse(curl.contains("should-not-apply"), "curl=$curl")
+
+        // Verify explorer.ok KO/EN button labels ("확인" / "OK")
+        val i18n = I18nManager()
+        assertEquals("확인", i18n.translate("explorer.ok"))
+        i18n.toggleLanguage()
+        assertEquals("OK", i18n.translate("explorer.ok"))
+    }
 }
