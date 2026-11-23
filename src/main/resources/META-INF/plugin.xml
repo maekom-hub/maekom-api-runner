@@ -18,6 +18,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.3.3</h3>
+    <ul>
+      <li><b>2-Row Request Bar Layout:</b> Reorganized the editor header into Row 1 (<code>Method</code> + full-width <code>Path/URL</code> + <code>▶ Run Step</code>) and Row 2 (<code>Step Alias</code> + <code>Expected</code> + <code>Delay(ms)</code>) to maximize URL readability.</li>
+    </ul>
     <h3>v0.3.2</h3>
     <ul>
       <li><b><code>[Resolved Request]</code> Masked Logging:</b> Prints the final resolved Method, URL, Headers, and Body right before execution while automatically masking <code>Secret</code> headers and local secrets as <code>****</code>.</li>

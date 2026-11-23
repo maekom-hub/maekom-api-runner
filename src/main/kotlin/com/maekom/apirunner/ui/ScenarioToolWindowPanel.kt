@@ -664,32 +664,77 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             }
         )
 
-        val aliasRow = JPanel(BorderLayout(6, 0)).apply {
-            stepAliasField.preferredSize = Dimension(200, 26)
-            add(stepAliasLabel, BorderLayout.WEST)
-            add(stepAliasField, BorderLayout.CENTER)
-        }
-
+        // [v0.3.3] 요청 바 2줄 재배치:
+        //   1행(핵심 요청 바): [Method ▾] → [Path / URL 입력창(최대 확장)] → [▶ 단건 실행]
+        //   2행(스텝 메타·실행 옵션 바): 스텝 별칭(유연 확장) | 기대 상태(컴팩트 고정 폭) | 대기(ms)(컴팩트 고정 폭)
+        // 변경 의도: 긴 API Path의 가로 가독성을 극대화하고 스텝 메타·실행 옵션을 탭 바로 위 전용 행으로 정돈
         val requestLineBar = JPanel(BorderLayout(6, 4))
         methodComboBox.preferredSize = Dimension(88, 28)
-
-        val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        expectedStatusField.preferredSize = Dimension(52, 28)
-        delayField.preferredSize = Dimension(56, 28)
-        rightControls.add(expectedStatusLabel)
-        rightControls.add(expectedStatusField)
-        rightControls.add(delayLabel)
-        rightControls.add(delayField)
-        rightControls.add(runSingleBtn)
-
         requestLineBar.add(methodComboBox, BorderLayout.WEST)
         requestLineBar.add(urlField, BorderLayout.CENTER)
-        requestLineBar.add(rightControls, BorderLayout.EAST)
+        requestLineBar.add(runSingleBtn, BorderLayout.EAST)
+
+        val stepOptionsRow = JPanel(GridBagLayout())
+        stepAliasField.minimumSize = Dimension(120, 26)
+        stepAliasField.preferredSize = Dimension(200, 26)
+        expectedStatusField.minimumSize = Dimension(54, 26)
+        expectedStatusField.preferredSize = Dimension(54, 26)
+        delayField.minimumSize = Dimension(58, 26)
+        delayField.preferredSize = Dimension(58, 26)
+
+        stepOptionsRow.add(
+            stepAliasLabel,
+            GridBagConstraints().apply {
+                gridx = 0; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insetsRight(6)
+            }
+        )
+        stepOptionsRow.add(
+            stepAliasField,
+            GridBagConstraints().apply {
+                gridx = 1; gridy = 0; weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insetsRight(10)
+            }
+        )
+        stepOptionsRow.add(
+            expectedStatusLabel,
+            GridBagConstraints().apply {
+                gridx = 2; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsRight(4)
+            }
+        )
+        stepOptionsRow.add(
+            expectedStatusField,
+            GridBagConstraints().apply {
+                gridx = 3; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsRight(10)
+            }
+        )
+        stepOptionsRow.add(
+            delayLabel,
+            GridBagConstraints().apply {
+                gridx = 4; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+                insets = JBUI.insetsRight(4)
+            }
+        )
+        stepOptionsRow.add(
+            delayField,
+            GridBagConstraints().apply {
+                gridx = 5; gridy = 0; weightx = 0.0
+                anchor = GridBagConstraints.EAST
+            }
+        )
 
         val requestHeaderContainer = JPanel(BorderLayout(0, 4)).apply {
             add(baseUrlBarPanel, BorderLayout.NORTH)
-            add(aliasRow, BorderLayout.CENTER)
-            add(requestLineBar, BorderLayout.SOUTH)
+            add(requestLineBar, BorderLayout.CENTER)
+            add(stepOptionsRow, BorderLayout.SOUTH)
         }
 
         panel.add(requestHeaderContainer, BorderLayout.NORTH)
