@@ -44,10 +44,9 @@ import javax.swing.event.TableModelEvent
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.4.1] [변수·헤더 관리] 5탭 단일 통합 다이얼로그 개편(공통 헤더 / 시나리오 변수 / 프로젝트 전역 변수 인라인 편집 /
-//          로컬 시크릿 / 내장 동적 변수), 탭별 적용 범위 배지 표시 및 셀 안전 커밋·변경된 저장소만 선택 저장 지원
-// 변경 의도: 상단 툴바의 분리된 두 관리 창을 하나로 통합해 가로 공간을 절약하고, 프로젝트 전역 변수를 팝업 없이
-//          인라인으로 직접 편집하며 중복 키 검증·복원 및 기존 디스크 저장 경로 100% 호환성을 보장
+// [v0.4.2] 통합 관리 다이얼로그 명칭('공통 헤더·변수 관리') 통일, 5개 탭 영문 병기 제거 및 탭 순서 재배치
+//          (0: 공통 헤더 → 1: 프로젝트 전역 변수 → 2: 시나리오 변수 → 3: 로컬 시크릿 → 4: 내장 동적 변수·헤더)
+// 변경 의도: 상단 툴바 버튼명과 다이얼로그 타이틀·탭 명칭을 일관되게 정돈하고 자주 사용하는 프로젝트 전역 변수를 2번째 탭으로 전진 배치
 
 enum class HeaderImportMode {
     MERGE,
@@ -76,8 +75,8 @@ class GlobalConfigDialog(
 
     companion object {
         const val TAB_COMMON_HEADERS = 0
-        const val TAB_SCENARIO_VARS = 1
-        const val TAB_PROJECT_GLOBALS = 2
+        const val TAB_PROJECT_GLOBALS = 1
+        const val TAB_SCENARIO_VARS = 2
         const val TAB_LOCAL_SECRETS = 3
         const val TAB_DYNAMIC_REF = 4
 
@@ -206,10 +205,17 @@ class GlobalConfigDialog(
         val scenarioDisplay = ScenarioFileRepository.formatDisplayPath(currentScenarioPath)
             .ifBlank { currentScenario.name }
 
+        // 1) 공통 헤더 (0)
         tabbedPane.addTab(
             I18nManager.t("global.tab.headers"),
             buildCommonHeadersTab(scenarioDisplay)
         )
+        // 2) 프로젝트 전역 변수 (1)
+        tabbedPane.addTab(
+            I18nManager.t("global.tab.projectGlobals"),
+            buildProjectGlobalsTab()
+        )
+        // 3) 시나리오 변수 (2)
         tabbedPane.addTab(
             I18nManager.t("global.tab.vars"),
             buildKeyValueTableTab(
@@ -221,10 +227,7 @@ class GlobalConfigDialog(
                 bulkTargetLabel = I18nManager.t("global.tab.vars")
             )
         )
-        tabbedPane.addTab(
-            I18nManager.t("global.tab.projectGlobals"),
-            buildProjectGlobalsTab()
-        )
+        // 4) 로컬 시크릿 (3)
         tabbedPane.addTab(
             I18nManager.t("global.tab.secrets"),
             buildKeyValueTableTab(
@@ -236,6 +239,7 @@ class GlobalConfigDialog(
                 bulkTargetLabel = I18nManager.t("global.tab.secrets")
             )
         )
+        // 5) 내장 동적 변수·헤더 (4)
         tabbedPane.addTab(
             I18nManager.t("global.tab.dynamicRef"),
             buildDynamicVariablesTab()

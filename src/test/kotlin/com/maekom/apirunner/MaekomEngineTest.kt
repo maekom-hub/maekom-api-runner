@@ -234,7 +234,7 @@ class MaekomEngineTest {
         assertEquals("저장", manager.translate("toolbar.save"))
         assertEquals("✎ 이름 변경", manager.translate("toolbar.rename"))
         assertEquals("cURL", manager.translate("toolbar.curl"))
-        assertEquals("변수·헤더 관리", manager.translate("toolbar.globalConfig"))
+        assertEquals("공통 헤더·변수 관리", manager.translate("toolbar.globalConfig"))
         assertEquals("변수 관리", manager.translate("toolbar.variables"))
         assertEquals("? 가이드", manager.translate("extract.guide"))
 
@@ -242,7 +242,7 @@ class MaekomEngineTest {
         assertEquals("Save", manager.translate("toolbar.save"))
         assertEquals("✎ Rename", manager.translate("toolbar.rename"))
         assertEquals("cURL", manager.translate("toolbar.curl"))
-        assertEquals("Vars & Headers", manager.translate("toolbar.globalConfig"))
+        assertEquals("Common Headers & Variables", manager.translate("toolbar.globalConfig"))
         assertEquals("Variables", manager.translate("toolbar.variables"))
         assertEquals("? Guide", manager.translate("extract.guide"))
 

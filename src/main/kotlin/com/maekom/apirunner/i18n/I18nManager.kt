@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.4.1] [변수·헤더 관리] 5탭 통합(전역 변수 인라인 편집·적용 범위 배지), cURL 빈 값 헤더 포함 옵션 및 폴더 일괄 실행 리포트 KO/EN 문구 추가
-// 변경 의도: v0.4.1 통합 관리 UI·cURL 빈 헤더 옵션·배치 회귀 실행 리포트의 모든 라벨과 안내를 KO/EN 번들에 동기화
+// [v0.4.2] 상단 툴바 버튼명('공통 헤더·변수 관리') 통일 및 통합 관리 다이얼로그 5개 탭 명칭 간소화(KO/EN 동기화)
+// 변경 의도: 불필요한 영문 병기를 제거하고 툴바 버튼·다이얼로그 타이틀·5개 탭 라벨을 간결하고 일관되게 정리
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -125,8 +125,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.save" to "저장",
             "toolbar.newScenario" to "새 시나리오",
             "toolbar.importExport" to "불러오기/내보내기 ▾",
-            "toolbar.globalConfig" to "변수·헤더 관리",
-            "toolbar.globalConfig.tooltip" to "공통 헤더, 시나리오 변수, 프로젝트 전역 변수, 로컬 시크릿 및 내장 동적 변수 통합 관리",
+            "toolbar.globalConfig" to "공통 헤더·변수 관리",
+            "toolbar.globalConfig.tooltip" to "공통 헤더, 프로젝트 전역 변수, 시나리오 변수, 로컬 시크릿 및 내장 동적 변수·헤더 통합 관리",
             "toolbar.variables" to "변수 관리",
             "toolbar.variables.tooltip" to "프로젝트 전역 변수, 내장 동적 변수 및 시나리오 추출 변수 통합 관리",
             "toolbar.curl" to "cURL",
@@ -492,14 +492,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "curl.noScenarioSteps.msg" to "cURL로 복사할 스텝이 시나리오에 없습니다.",
 
             // Global Config Dialog
-            "global.title" to "공통 헤더 / 시나리오 변수 / 로컬 시크릿 관리",
+            "global.title" to "공통 헤더·변수 관리",
             "global.save" to "저장",
             "global.cancel" to "취소",
-            "global.tab.headers" to "공통 헤더 (Common Headers)",
+            "global.tab.headers" to "공통 헤더",
             "global.tab.headers.hint" to "모든 스텝에 자동 병합됩니다. 개별 스텝 헤더에 값이 있으면 우선 적용되며, 개별 값이 비어 있으면 공통 헤더 값으로 자동 대체됩니다.",
-            "global.tab.vars" to "시나리오 변수 (Scenario Variables)",
+            "global.tab.vars" to "시나리오 변수",
             "global.tab.vars.hint" to "현재 시나리오 파일(.maekom/scenarios/*.json) 내부에 저장되는 전용 변수입니다. URL/헤더/본문에서 {{변수명}}으로 참조하세요.",
-            "global.tab.secrets" to "🔒 로컬 시크릿 (secrets.local.json)",
+            "global.tab.secrets" to "로컬 시크릿",
             "global.tab.secrets.hint" to "비밀번호/토큰 등 민감정보는 .maekom/secrets.local.json에 분리 저장됩니다(.gitignore 적용). 치환 우선순위: 내장 동적 변수 > 실행 컨텍스트 > 시크릿 > 전역 변수",
             "global.col.key" to "Key (이름)",
             "global.col.value" to "Value (값)",
@@ -622,13 +622,13 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extracted.override.promptValue" to "임시 테스트 값을 입력하세요:",
 
             // [v0.4.1] Unified 5-Tab Variables & Headers Dialog Scope Badges + Inline Global Var Validation
-            "global.unified.title" to "변수·헤더 통합 관리",
+            "global.unified.title" to "공통 헤더·변수 관리",
             "global.scope.scenario" to "[시나리오 전용: %s]",
             "global.scope.project" to "[프로젝트 공용]",
             "global.scope.projectGitIgnored" to "[프로젝트 공용 · Git 제외]",
             "global.scope.readonly" to "[읽기 전용 레퍼런스]",
             "global.tab.projectGlobals" to "프로젝트 전역 변수",
-            "global.tab.dynamicRef" to "내장 동적 변수",
+            "global.tab.dynamicRef" to "내장 동적 변수·헤더",
             "global.projectGlobals.inlineHint" to "셀을 더블클릭해 Key·Value를 직접 편집하세요. 시나리오를 전환해도 유지되며 모든 시나리오에서 {{변수명}}으로 참조됩니다.",
             "global.projectGlobals.dupKeyTitle" to "중복 변수명",
             "global.projectGlobals.dupKeyMsg" to "동일한 프로젝트 전역 변수명('%s')이 이미 존재합니다. 이전 값으로 복원합니다.",
@@ -678,8 +678,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.save" to "Save",
             "toolbar.newScenario" to "New Scenario",
             "toolbar.importExport" to "Import/Export ▾",
-            "toolbar.globalConfig" to "Vars & Headers",
-            "toolbar.globalConfig.tooltip" to "Unified manager for Common Headers, Scenario Variables, Global Variables, Local Secrets & Dynamic Reference",
+            "toolbar.globalConfig" to "Common Headers & Variables",
+            "toolbar.globalConfig.tooltip" to "Unified manager for Common Headers, Project Global Variables, Scenario Variables, Local Secrets & Built-in Dynamic Reference",
             "toolbar.variables" to "Variables",
             "toolbar.variables.tooltip" to "Manage Project Global Variables, Built-in Dynamic & Extracted Variables",
             "toolbar.curl" to "cURL",
@@ -1044,14 +1044,14 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "curl.noScenarioSteps.msg" to "There are no steps in this scenario to export.",
 
             // Global Config Dialog
-            "global.title" to "Common Headers / Scenario Variables / Local Secrets",
+            "global.title" to "Common Headers & Variables",
             "global.save" to "Save",
             "global.cancel" to "Cancel",
             "global.tab.headers" to "Common Headers",
             "global.tab.headers.hint" to "Automatically merged into all steps. Non-empty step headers take precedence; blank step header values automatically fall back to the enabled common header value.",
             "global.tab.vars" to "Scenario Variables",
             "global.tab.vars.hint" to "Stored inside the current scenario JSON (.maekom/scenarios/*.json). Reference via {{varName}} in URL/Headers/Body.",
-            "global.tab.secrets" to "🔒 Local Secrets (secrets.local.json)",
+            "global.tab.secrets" to "Local Secrets",
             "global.tab.secrets.hint" to "Sensitive data is stored separately in .maekom/secrets.local.json (gitignored). Priority: Dynamic > Runtime Context > Secrets > Global Vars",
             "global.col.key" to "Key",
             "global.col.value" to "Value",
@@ -1174,13 +1174,13 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extracted.override.promptValue" to "Enter temporary test value:",
 
             // [v0.4.1] Unified 5-Tab Variables & Headers Dialog Scope Badges + Inline Global Var Validation
-            "global.unified.title" to "Variables & Headers Manager",
+            "global.unified.title" to "Common Headers & Variables",
             "global.scope.scenario" to "[Scenario Only: %s]",
             "global.scope.project" to "[Project Shared]",
             "global.scope.projectGitIgnored" to "[Project Shared · Git Ignored]",
             "global.scope.readonly" to "[Read-Only Reference]",
-            "global.tab.projectGlobals" to "Global Variables",
-            "global.tab.dynamicRef" to "Dynamic Variables",
+            "global.tab.projectGlobals" to "Project Global Variables",
+            "global.tab.dynamicRef" to "Built-in Dynamic Variables & Headers",
             "global.projectGlobals.inlineHint" to "Double-click any Key or Value cell to edit inline. Preserved across scenario switches and referenced via {{varName}}.",
             "global.projectGlobals.dupKeyTitle" to "Duplicate Variable Key",
             "global.projectGlobals.dupKeyMsg" to "A global variable named '%s' already exists. Restoring previous value.",
