@@ -161,7 +161,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val saveBtn = JButton()
     private val scenarioManageBtn = JButton()
     private val globalConfigBtn = JButton()
-    private val variablesHelpBtn = JButton()
     private val curlCopyBtn = JButton()
     private val runAllBtn = JButton()
     private val stopBtn = JButton()
@@ -503,7 +502,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stopBtn.isEnabled = false
 
         scenarioManageBtn.margin = JBUI.insets(2, 7)
-        variablesHelpBtn.margin = JBUI.insets(2, 7)
+        globalConfigBtn.margin = JBUI.insets(2, 7)
         curlCopyBtn.margin = JBUI.insets(2, 7)
 
         applyRunButtonStyle(runAllBtn)
@@ -515,17 +514,15 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.add(scenarioComboBox)
         // 2) [저장]
         topToolbarPanel.add(saveBtn)
-        // 3) [시나리오 관리 ▾] (새 시나리오/이름 변경/복제/삭제/불러오기/내보내기 통합)
+        // 3) [시나리오 관리]
         topToolbarPanel.add(scenarioManageBtn)
-        // 4) [공통 헤더 관리]
+        // 4) [변수·헤더 관리] (공통 헤더·시나리오 변수·전역 변수·로컬 시크릿·동적 변수 5탭 통합)
         topToolbarPanel.add(globalConfigBtn)
-        // 5) [변수 관리]
-        topToolbarPanel.add(variablesHelpBtn)
-        // 6) [cURL 복사]
+        // 5) [cURL]
         topToolbarPanel.add(curlCopyBtn)
-        // 7) [▶ 전체 시나리오 실행]
+        // 6) [▶ 전체 시나리오 실행]
         topToolbarPanel.add(runAllBtn)
-        // 8) [■ 중지]
+        // 7) [■ 중지]
         topToolbarPanel.add(stopBtn)
 
         return topToolbarPanel
@@ -1004,7 +1001,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioManageBtn.addActionListener { openScenarioExplorerDialog() }
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
-        variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
         curlCopyBtn.addActionListener { openCurlManagerDialog() }
         updateCheckBtn.addActionListener { handleUpdateCheckButtonClick() }
 
@@ -1433,7 +1429,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             initialActiveScenarioPath = currentScenarioPath,
             defaultBaseUrlProvider = {
                 baseUrlField.text.trim().ifEmpty { PsiEndpointExtractor.detectServerBaseUrl(project) }
-            }
+            },
+            activeEnvironmentProvider = { getActiveEnvironmentProfile() }
         )
         dialog.show()
 
@@ -1452,6 +1449,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 val preferred = dialog.selectedScenarioPathToOpen?.takeIf { it in remaining } ?: remaining.first()
                 refreshScenarioComboBox(preferred)
                 loadScenarioByPath(preferred)
+                dialog.selectedStepIndexToOpen?.let { stepIdx ->
+                    if (stepIdx in currentScenario.steps.indices) selectStepRow(stepIdx)
+                }
             }
             return
         }
@@ -1471,11 +1471,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         refreshScenarioComboBox(currentScenarioPath)
 
-        // 3) 더블클릭 또는 [열기 / 확인]으로 다른 시나리오를 선택한 경우 미저장 변경사항 가드 거쳐 전환
+        // 3) 더블클릭, [확인], 또는 배치 실행 리포트의 [해당 시나리오 열기]로 시나리오(및 실패 스텝) 즉시 로드
         if (dialog.isOK) {
             val targetPath = dialog.selectedScenarioPathToOpen
-            if (!targetPath.isNullOrBlank() && (targetPath != currentScenarioPath || isQuickSingleMode)) {
-                handleScenarioSwitchRequest(targetPath)
+            val targetStepIdx = dialog.selectedStepIndexToOpen
+            if (!targetPath.isNullOrBlank()) {
+                if (targetPath != currentScenarioPath || isQuickSingleMode) {
+                    handleScenarioSwitchRequest(targetPath)
+                }
+                if (targetStepIdx != null && currentScenarioPath == targetPath && targetStepIdx in currentScenario.steps.indices) {
+                    selectStepRow(targetStepIdx)
+                }
             }
         }
     }
@@ -1581,18 +1587,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         if (profile != null && profile.baseUrl != newUrl) {
             profile.baseUrl = newUrl
         }
-    }
-
-    // --- Feature 4: 3-Tab Variables Hub Dialog ---
-
-    private fun openVariablesCheatSheet() {
-        VariableCheatSheetDialog(
-            project = project,
-            storage = storage,
-            currentScenarioProvider = { currentScenario },
-            extractedVariablesProvider = { collectExtractedVariablesOnly() },
-            onGlobalVariablesChanged = { /* menus read latest storage dynamically */ }
-        ).show()
     }
 
     // --- Feature 5: One-Click Response JSON Field Extraction ---
@@ -1915,8 +1909,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         scenarioManageBtn.toolTipText = I18nManager.t("toolbar.scenarioManage.tooltip")
         saveBtn.text = I18nManager.t("toolbar.save")
         globalConfigBtn.text = I18nManager.t("toolbar.globalConfig")
-        variablesHelpBtn.text = I18nManager.t("toolbar.variables")
-        variablesHelpBtn.toolTipText = I18nManager.t("toolbar.variables.tooltip")
+        globalConfigBtn.toolTipText = I18nManager.t("toolbar.globalConfig.tooltip")
         curlCopyBtn.text = I18nManager.t("toolbar.curl")
         curlCopyBtn.toolTipText = I18nManager.t("toolbar.curl.tooltip")
         envComboBox.toolTipText = I18nManager.t("env.combo.tooltip")
@@ -2396,11 +2389,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    private fun openGlobalConfigDialog() {
+    // [v0.4.1] [변수·헤더 관리] 5탭 통합 다이얼로그 오픈 및 변경된 저장소(시나리오 / 프로젝트 전역 변수 / 로컬 시크릿)만 선택 저장
+    private fun openGlobalConfigDialog(initialTab: Int = GlobalConfigDialog.TAB_COMMON_HEADERS) {
         stopAllTableEdits()
         syncEditorToCurrentStep()
 
         val currentSecrets = storage.loadSecrets()
+        val currentProjectGlobals = storage.loadGlobalVariables()
         val dialog = GlobalConfigDialog(
             project = project,
             currentScenario = currentScenario,
@@ -2408,16 +2403,31 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             initialCommonHeaders = currentScenario.effectiveCommonHeaderItems(),
             initialVariables = currentScenario.globalVariables,
             initialSecrets = currentSecrets,
-            currentScenarioPath = currentScenarioPath
+            currentScenarioPath = currentScenarioPath,
+            initialProjectGlobals = currentProjectGlobals,
+            initialSelectedTab = initialTab
         )
         if (dialog.showAndGet()) {
-            currentScenario.applyCommonHeaderItems(dialog.getCommonHeaderItems())
-            currentScenario.globalVariables = dialog.getGlobalVariables()
-            storage.saveSecrets(dialog.getSecrets())
-            saveCurrentScenario(showFeedback = false)
-            scenarioStatusLabel.text = I18nManager.t("status.globalSaved")
-            scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
-            revalidateNativeHeaderComponents()
+            var anySaved = false
+            if (dialog.isScenarioTabChanged()) {
+                currentScenario.applyCommonHeaderItems(dialog.getCommonHeaderItems())
+                currentScenario.globalVariables = dialog.getGlobalVariables()
+                saveCurrentScenario(showFeedback = false)
+                anySaved = true
+            }
+            if (dialog.isProjectGlobalsChanged()) {
+                storage.saveGlobalVariables(dialog.getProjectGlobalVariables())
+                anySaved = true
+            }
+            if (dialog.isSecretsChanged()) {
+                storage.saveSecrets(dialog.getSecrets())
+                anySaved = true
+            }
+            if (anySaved) {
+                scenarioStatusLabel.text = I18nManager.t("status.globalSaved")
+                scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+                revalidateNativeHeaderComponents()
+            }
         }
     }
 

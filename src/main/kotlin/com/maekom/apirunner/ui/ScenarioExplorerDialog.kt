@@ -6,10 +6,15 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -24,7 +29,10 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
+import com.maekom.apirunner.engine.BatchExecutionReport
+import com.maekom.apirunner.engine.BatchRunner
 import com.maekom.apirunner.i18n.I18nManager
+import com.maekom.apirunner.model.EnvironmentProfile
 import com.maekom.apirunner.model.FolderEntryInfo
 import com.maekom.apirunner.model.ScenarioEntryInfo
 import com.maekom.apirunner.model.ScenarioTreeSnapshot
@@ -84,7 +92,8 @@ class ScenarioExplorerDialog(
     private val project: Project,
     private val storage: ScenarioStorageService,
     initialActiveScenarioPath: String,
-    private val defaultBaseUrlProvider: () -> String
+    private val defaultBaseUrlProvider: () -> String,
+    private val activeEnvironmentProvider: () -> EnvironmentProfile? = { null }
 ) : DialogWrapper(project, true) {
 
     var trackedActiveScenarioPath: String = ScenarioFileRepository.normalizeRelativePath(initialActiveScenarioPath)
@@ -97,6 +106,9 @@ class ScenarioExplorerDialog(
         private set
 
     var selectedScenarioPathToOpen: String? = null
+        private set
+
+    var selectedStepIndexToOpen: Int? = null
         private set
 
     private var currentSnapshot: ScenarioTreeSnapshot = ScenarioTreeSnapshot(emptyList(), emptyList(), emptyMap())
@@ -330,6 +342,21 @@ class ScenarioExplorerDialog(
             override fun actionPerformed(e: AnActionEvent) = importScenarioToSelectedLocation()
         })
 
+        // [v0.4.1] 7) 구분선 + 폴더 내 전체 시나리오 일괄 실행 (Run Folder)
+        group.add(Separator.create())
+        group.add(object : DumbAwareAction(
+            I18nManager.t("explorer.action.runFolder"),
+            I18nManager.t("explorer.action.runFolder"),
+            AllIcons.Actions.Execute
+        ) {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = getSelectedNodeData() is ExplorerNodeData.Folder
+            }
+
+            override fun actionPerformed(e: AnActionEvent) = runSelectedFolderBatch()
+        })
+
         ActionManager.getInstance()
             .createActionToolbar("MaekomScenarioExplorerToolbar", group, true)
             .apply {
@@ -404,6 +431,12 @@ class ScenarioExplorerDialog(
                 }
                 val selected = getSelectedNodeData()
                 val menu = JPopupMenu()
+                if (selected is ExplorerNodeData.Folder) {
+                    menu.add(JMenuItem(I18nManager.t("explorer.action.runFolder"), AllIcons.Actions.Execute).apply {
+                        addActionListener { runSelectedFolderBatch() }
+                    })
+                    menu.addSeparator()
+                }
                 menu.add(JMenuItem(I18nManager.t("explorer.action.newFolder"), AllIcons.Actions.NewFolder).apply {
                     addActionListener { promptCreateFolder() }
                 })
@@ -933,6 +966,103 @@ class ScenarioExplorerDialog(
                 I18nManager.t("dialog.error.title")
             )
         }
+    }
+
+    // [v0.4.1] 폴더 내 전체 시나리오 일괄 실행 (하위 폴더 포함 읽기 전용 로드, PRD 보호 모드 확인, Task.Backgroundable 진행·취소 및 결과 리포트)
+    private fun runSelectedFolderBatch() {
+        if (!flushEditsBeforeAction()) return
+        val folderNode = getSelectedNodeData() as? ExplorerNodeData.Folder ?: return
+        val folderPath = folderNode.info.relativePath
+        val folderDisplay = ScenarioFileRepository.formatDisplayPath(folderPath)
+
+        val targetEntries = currentSnapshot.scenarios
+            .filter { it.folderPath == folderPath || it.folderPath.startsWith("$folderPath/") }
+            .sortedWith(compareBy<ScenarioEntryInfo>({ it.folderPath.lowercase() }, { it.name.lowercase() }))
+
+        if (targetEntries.isEmpty()) {
+            Messages.showInfoMessage(
+                project,
+                I18nManager.t("batch.emptyFolder.msg", folderDisplay),
+                I18nManager.t("explorer.title")
+            )
+            return
+        }
+
+        val activeEnv = activeEnvironmentProvider()
+        val envName = activeEnv?.name ?: "Local"
+        val effectiveBaseUrl = defaultBaseUrlProvider().ifBlank { activeEnv?.baseUrl.orEmpty() }
+
+        // 보호 모드(PRD 등 confirmBeforeRun=true) 환경이면 일괄 실행 전 확인 경고 표시
+        if (activeEnv?.confirmBeforeRun == true) {
+            val confirmMsg = if (I18nManager.getInstance().language.code == "EN") {
+                I18nManager.t("batch.protect.confirmMsg", targetEntries.size, folderDisplay, envName, effectiveBaseUrl)
+            } else {
+                I18nManager.t("batch.protect.confirmMsg", envName, folderDisplay, targetEntries.size, effectiveBaseUrl)
+            }
+            val choice = Messages.showYesNoDialog(
+                project,
+                confirmMsg,
+                I18nManager.t("env.protect.confirmTitle"),
+                Messages.getWarningIcon()
+            )
+            if (choice != Messages.YES) return
+        }
+
+        // 모든 시나리오를 읽기 전용으로 로드(원본 .json 파일 무수정 보장)
+        val loadedScenarios = targetEntries.mapNotNull { entry ->
+            storage.loadScenario(entry.relativePath)?.let { entry.relativePath to it }
+        }
+        if (loadedScenarios.isEmpty()) return
+
+        val secrets = storage.loadSecrets()
+        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
+        val batchRunner = BatchRunner()
+
+        ProgressManager.getInstance().run(object : Task.Backgroundable(
+            project,
+            I18nManager.t("batch.progress.title", folderDisplay),
+            true
+        ) {
+            private var report: BatchExecutionReport? = null
+
+            override fun onCancel() {
+                batchRunner.stop()
+            }
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = false
+                report = batchRunner.runFolderScenarios(
+                    folderPath = folderPath,
+                    environmentName = envName,
+                    activeBaseUrl = effectiveBaseUrl,
+                    scenarios = loadedScenarios,
+                    secrets = secrets,
+                    projectGlobalVariables = projectGlobals,
+                    isCancelledCheck = { indicator.isCanceled },
+                    onScenarioProgress = { idx, total, displayPath ->
+                        indicator.fraction = idx.toDouble() / total.coerceAtLeast(1).toDouble()
+                        indicator.text2 = I18nManager.t("batch.progress.running", idx + 1, total, displayPath)
+                    }
+                )
+                indicator.fraction = 1.0
+            }
+
+            override fun onFinished() {
+                val finalReport = report ?: return
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        if (project.isDisposed) return@invokeLater
+                        val reportDialog = BatchRunReportDialog(project, finalReport)
+                        if (reportDialog.showAndGet() && !reportDialog.openTargetScenarioPath.isNullOrBlank()) {
+                            selectedScenarioPathToOpen = reportDialog.openTargetScenarioPath
+                            selectedStepIndexToOpen = reportDialog.openTargetStepIndex
+                            close(OK_EXIT_CODE)
+                        }
+                    },
+                    ModalityState.any()
+                )
+            }
+        })
     }
 
     // --- Tree Model Construction & Expansion Preservation ---

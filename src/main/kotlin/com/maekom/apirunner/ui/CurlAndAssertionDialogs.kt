@@ -64,6 +64,7 @@ class CurlManagerDialog(
     private val targetScenarioRadio = JBRadioButton(I18nManager.t("curl.export.targetScenario"), activeStep == null)
     private val resolveEnvCheckbox = JBCheckBox(I18nManager.t("curl.export.resolveEnv"), true)
     private val maskSecretsCheckbox = JBCheckBox(I18nManager.t("curl.export.maskSecrets"), true)
+    private val includeEmptyHeadersCheckbox = JBCheckBox(I18nManager.t("curl.export.includeEmptyHeaders"), false)
     private val exportPreviewArea = JBTextArea().apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, 12)
@@ -132,6 +133,7 @@ class CurlManagerDialog(
         val checkRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
             add(resolveEnvCheckbox)
             add(maskSecretsCheckbox)
+            add(includeEmptyHeadersCheckbox)
         }
         gbc.gridx = 0; gbc.gridy = 0
         optionsPanel.add(targetRow, gbc)
@@ -142,6 +144,7 @@ class CurlManagerDialog(
         targetScenarioRadio.addActionListener { refreshExportPreview() }
         resolveEnvCheckbox.addActionListener { refreshExportPreview() }
         maskSecretsCheckbox.addActionListener { refreshExportPreview() }
+        includeEmptyHeadersCheckbox.addActionListener { refreshExportPreview() }
 
         exportCopyBtn.addActionListener {
             val content = exportPreviewArea.text
@@ -168,6 +171,7 @@ class CurlManagerDialog(
     private fun refreshExportPreview() {
         val resolveEnv = resolveEnvCheckbox.isSelected
         val maskSec = maskSecretsCheckbox.isSelected
+        val includeEmpty = includeEmptyHeadersCheckbox.isSelected
         val output = if (targetStepRadio.isSelected && activeStep != null) {
             CurlExporter.exportStep(
                 step = activeStep,
@@ -176,7 +180,8 @@ class CurlManagerDialog(
                 secrets = secrets,
                 projectGlobalVariables = projectGlobalVariables,
                 resolveEnvironmentAndVars = resolveEnv,
-                maskSecrets = maskSec
+                maskSecrets = maskSec,
+                includeEmptyHeaders = includeEmpty
             )
         } else {
             if (scenario.steps.isEmpty()) {
@@ -188,7 +193,8 @@ class CurlManagerDialog(
                     secrets = secrets,
                     projectGlobalVariables = projectGlobalVariables,
                     resolveEnvironmentAndVars = resolveEnv,
-                    maskSecrets = maskSec
+                    maskSecrets = maskSec,
+                    includeEmptyHeaders = includeEmpty
                 )
             }
         }

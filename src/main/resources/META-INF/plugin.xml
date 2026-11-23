@@ -18,6 +18,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.4.1</h3>
+    <ul>
+      <li><b>Unified 5-Tab <code>[Vars &amp; Headers]</code> Dialog:</b> Consolidated Common Headers, Scenario Variables, Project Global Variables (with inline cell editing &amp; duplicate-key validation), Local Secrets, and Built-in Dynamic Reference into one dialog with explicit scope badges and safe cell commit.</li>
+      <li><b>Clean cURL Export (Omit Blank Values):</b> Automatically omits blank headers &amp; query params from exported <code>curl</code> commands by default, plus an optional <code>Include empty headers</code> checkbox.</li>
+      <li><b>Folder Regression Batch Run &amp; Report:</b> Added <code>Run Folder</code> in <code>Scenario Manager</code> for read-only, session-isolated background batch execution (with <code>PRD</code> protection confirmation &amp; cancel support) and a detailed report dialog that opens failing steps directly.</li>
+    </ul>
     <h3>v0.4.0</h3>
     <ul>
       <li><b>Unified <code>[cURL]</code> Dialog (Export Preview + Smart Import):</b> Live single-step / full-scenario cURL preview with variable substitution &amp; Secret masking toggles, plus a multiline (<code>\</code> / <code>^</code>) smart cURL parser that splits query params, strips matching BaseURL, and excludes duplicate Common Headers.</li>

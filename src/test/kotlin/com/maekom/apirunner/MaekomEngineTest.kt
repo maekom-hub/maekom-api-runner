@@ -3,6 +3,7 @@ package com.maekom.apirunner
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.maekom.apirunner.engine.AssertionEvaluator
+import com.maekom.apirunner.engine.BatchRunner
 import com.maekom.apirunner.engine.BulkJsonVariableParser
 import com.maekom.apirunner.engine.BulkMergeMode
 import com.maekom.apirunner.engine.CurlExporter
@@ -233,7 +234,7 @@ class MaekomEngineTest {
         assertEquals("저장", manager.translate("toolbar.save"))
         assertEquals("✎ 이름 변경", manager.translate("toolbar.rename"))
         assertEquals("cURL", manager.translate("toolbar.curl"))
-        assertEquals("공통 헤더 관리", manager.translate("toolbar.globalConfig"))
+        assertEquals("변수·헤더 관리", manager.translate("toolbar.globalConfig"))
         assertEquals("변수 관리", manager.translate("toolbar.variables"))
         assertEquals("? 가이드", manager.translate("extract.guide"))
 
@@ -241,7 +242,7 @@ class MaekomEngineTest {
         assertEquals("Save", manager.translate("toolbar.save"))
         assertEquals("✎ Rename", manager.translate("toolbar.rename"))
         assertEquals("cURL", manager.translate("toolbar.curl"))
-        assertEquals("Common Headers", manager.translate("toolbar.globalConfig"))
+        assertEquals("Vars & Headers", manager.translate("toolbar.globalConfig"))
         assertEquals("Variables", manager.translate("toolbar.variables"))
         assertEquals("? Guide", manager.translate("extract.guide"))
 
@@ -838,5 +839,109 @@ class MaekomEngineTest {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         val legacyStep = mapper.readValue("""{"method":"GET","url":"/legacy"}""", ApiStep::class.java)
         assertTrue(legacyStep.assertions.isEmpty())
+    }
+
+    // [v0.4.1] cURL 빈 값 헤더·파라미터 제외 및 옵션 토글 + 폴더 일괄 실행(BatchRunner) 세션 격리·리포트 단위 테스트
+    @Test
+    fun `curl omits blank headers and query params by default and batch runner isolates scenario sessions`() {
+        // 1. CurlExporter blank header & query param omission + includeEmptyHeaders toggle
+        val curlScenario = ApiScenario(
+            name = "empty-filter",
+            baseUrl = "http://localhost:8080",
+            commonHeaders = mutableListOf(
+                CommonHeaderItem(enabled = true, key = "X-Common-Ok", value = "ok-val"),
+                CommonHeaderItem(enabled = true, key = "X-Common-Empty", value = "   ")
+            )
+        )
+        val curlStep = ApiStep(
+            method = "GET",
+            url = "/api/search",
+            queryParams = mutableListOf(
+                QueryParamItem(enabled = true, key = "q", value = "chili"),
+                QueryParamItem(enabled = true, key = "emptyParam", value = "   ")
+            ),
+            headers = linkedMapOf(
+                "X-Common-Ok" to "",       // falls back to "ok-val"
+                "X-Blank-Step" to "   ",   // omitted unless includeEmptyHeaders=true
+                "X-Common-Empty" to ""     // omitted unless includeEmptyHeaders=true
+            )
+        )
+        val defaultCurl = CurlExporter.exportStep(curlStep, curlScenario)
+        assertTrue(defaultCurl.contains("q=chili"), "defaultCurl=$defaultCurl")
+        assertFalse(defaultCurl.contains("emptyParam"), "defaultCurl=$defaultCurl")
+        assertTrue(defaultCurl.contains("-H 'X-Common-Ok: ok-val'"), "defaultCurl=$defaultCurl")
+        assertFalse(defaultCurl.contains("X-Blank-Step"), "defaultCurl=$defaultCurl")
+        assertFalse(defaultCurl.contains("X-Common-Empty"), "defaultCurl=$defaultCurl")
+
+        val withEmptyCurl = CurlExporter.exportStep(curlStep, curlScenario, includeEmptyHeaders = true)
+        assertTrue(withEmptyCurl.contains("-H 'X-Blank-Step: '"), "withEmptyCurl=$withEmptyCurl")
+        assertTrue(withEmptyCurl.contains("-H 'X-Common-Empty: '"), "withEmptyCurl=$withEmptyCurl")
+
+        // 2. BatchRunner session isolation & assertion failure reporting
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var scenario2AuthHeader: String? = null
+        server.createContext("/s1") { ex ->
+            val body = """{"token":"leaked-tok"}""".toByteArray()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.use { it.write(body) }
+        }
+        server.createContext("/s2") { ex ->
+            scenario2AuthHeader = ex.requestHeaders.getFirst("Authorization")
+            val body = """{"status":"FAIL_CODE"}""".toByteArray()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val baseUrl = "http://127.0.0.1:${server.address.port}"
+            val s1 = ApiScenario(
+                name = "s1",
+                baseUrl = "http://should-be-overridden",
+                steps = mutableListOf(
+                    ApiStep(
+                        name = "Issue Token",
+                        method = "GET",
+                        url = "/s1",
+                        extractRules = mutableListOf(ExtractRule("tok", "$.token", true))
+                    )
+                )
+            )
+            val s2 = ApiScenario(
+                name = "s2",
+                baseUrl = "http://should-be-overridden",
+                steps = mutableListOf(
+                    ApiStep(
+                        name = "Verify Isolated",
+                        method = "GET",
+                        url = "/s2",
+                        headers = linkedMapOf("Authorization" to "Bearer {{tok}}"),
+                        assertions = mutableListOf(AssertionRule(true, "$.status", "==", "OK"))
+                    )
+                )
+            )
+
+            val report = BatchRunner().runFolderScenarios(
+                folderPath = "regression",
+                environmentName = "Local",
+                activeBaseUrl = baseUrl,
+                scenarios = listOf("regression/s1" to s1, "regression/s2" to s2)
+            )
+
+            assertEquals(2, report.totalCount)
+            assertEquals(1, report.passedCount)
+            assertEquals(1, report.failedCount)
+            assertFalse(report.cancelled)
+            assertTrue(report.scenarioResults[0].passed)
+            assertFalse(report.scenarioResults[1].passed)
+            assertEquals(0, report.scenarioResults[1].firstFailedStepIndex)
+            // Scenario 2 must NOT receive scenario 1's extracted `tok` (session isolated!)
+            assertEquals("Bearer {{tok}}", scenario2AuthHeader)
+            // Original scenario objects remain untouched (read-only guarantee)
+            assertEquals("http://should-be-overridden", s1.baseUrl)
+        } finally {
+            server.stop(0)
+        }
     }
 }

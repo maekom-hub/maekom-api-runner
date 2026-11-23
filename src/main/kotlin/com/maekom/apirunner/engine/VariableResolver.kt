@@ -194,12 +194,14 @@ object VariableResolver {
      * any inline query parameters already present in the URL.
      * If a key exists in both inline URL and enabled Params, the Params entry overrides the inline one.
      */
+    // [v0.4.1] cURL 내보내기 시 빈 값(isBlank) Query Parameter 제외 옵션(skipBlankValues) 지원
     fun appendQueryParams(
         url: String,
         queryParams: List<QueryParamItem>,
         runtimeContext: Map<String, String> = emptyMap(),
         secrets: Map<String, String> = emptyMap(),
-        globalVariables: Map<String, String> = emptyMap()
+        globalVariables: Map<String, String> = emptyMap(),
+        skipBlankValues: Boolean = false
     ): String {
         val resolvedParams = queryParams
             .filter { it.enabled }
@@ -209,7 +211,11 @@ object VariableResolver {
                     null
                 } else {
                     val resolvedVal = resolve(item.value, runtimeContext, secrets, globalVariables)
-                    resolvedKey to resolvedVal
+                    if (skipBlankValues && resolvedVal.isBlank()) {
+                        null
+                    } else {
+                        resolvedKey to resolvedVal
+                    }
                 }
             }
 

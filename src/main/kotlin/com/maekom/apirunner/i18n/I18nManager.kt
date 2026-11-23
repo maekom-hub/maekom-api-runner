@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.4.0] [cURL] 통합 다이얼로그(내보내기/가져오기), 응답 검증(No-Code Assertion), 선행 변수 누락 보호 및 추출 변수 Override KO/EN 문구 추가
-// 변경 의도: v0.4.0 신규 다이얼로그·탭·버튼·경고 문구를 한국어/영어 양국어 번들에 완벽 동기화
+// [v0.4.1] [변수·헤더 관리] 5탭 통합(전역 변수 인라인 편집·적용 범위 배지), cURL 빈 값 헤더 포함 옵션 및 폴더 일괄 실행 리포트 KO/EN 문구 추가
+// 변경 의도: v0.4.1 통합 관리 UI·cURL 빈 헤더 옵션·배치 회귀 실행 리포트의 모든 라벨과 안내를 KO/EN 번들에 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -125,7 +125,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.save" to "저장",
             "toolbar.newScenario" to "새 시나리오",
             "toolbar.importExport" to "불러오기/내보내기 ▾",
-            "toolbar.globalConfig" to "공통 헤더 관리",
+            "toolbar.globalConfig" to "변수·헤더 관리",
+            "toolbar.globalConfig.tooltip" to "공통 헤더, 시나리오 변수, 프로젝트 전역 변수, 로컬 시크릿 및 내장 동적 변수 통합 관리",
             "toolbar.variables" to "변수 관리",
             "toolbar.variables.tooltip" to "프로젝트 전역 변수, 내장 동적 변수 및 시나리오 추출 변수 통합 관리",
             "toolbar.curl" to "cURL",
@@ -618,7 +619,49 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extracted.override.remove" to "- 삭제",
             "extracted.override.promptTitle" to "추출 변수 수동 추가 (Override)",
             "extracted.override.promptName" to "변수명을 입력하세요 (예: accessToken):",
-            "extracted.override.promptValue" to "임시 테스트 값을 입력하세요:"
+            "extracted.override.promptValue" to "임시 테스트 값을 입력하세요:",
+
+            // [v0.4.1] Unified 5-Tab Variables & Headers Dialog Scope Badges + Inline Global Var Validation
+            "global.unified.title" to "변수·헤더 통합 관리",
+            "global.scope.scenario" to "[시나리오 전용: %s]",
+            "global.scope.project" to "[프로젝트 공용]",
+            "global.scope.projectGitIgnored" to "[프로젝트 공용 · Git 제외]",
+            "global.scope.readonly" to "[읽기 전용 레퍼런스]",
+            "global.tab.projectGlobals" to "프로젝트 전역 변수",
+            "global.tab.dynamicRef" to "내장 동적 변수",
+            "global.projectGlobals.inlineHint" to "셀을 더블클릭해 Key·Value를 직접 편집하세요. 시나리오를 전환해도 유지되며 모든 시나리오에서 {{변수명}}으로 참조됩니다.",
+            "global.projectGlobals.dupKeyTitle" to "중복 변수명",
+            "global.projectGlobals.dupKeyMsg" to "동일한 프로젝트 전역 변수명('%s')이 이미 존재합니다. 이전 값으로 복원합니다.",
+            "global.projectGlobals.reservedKeyMsg" to "'$' 접두사는 내장 동적 변수 예약어입니다. 이전 값으로 복원합니다.",
+            "global.dynamic.hint" to "요청 실행 및 cURL 내보내기 직전 실시간으로 평가되는 내장 동적 변수 목록입니다. [복사] 또는 더블클릭으로 복사하세요.",
+
+            // [v0.4.1] cURL Export Empty Header Option
+            "curl.export.includeEmptyHeaders" to "빈 값(Empty) 헤더 포함",
+
+            // [v0.4.1] Folder Regression Batch Run & Report
+            "explorer.action.runFolder" to "폴더 내 전체 시나리오 실행 (Run Folder)",
+            "batch.emptyFolder.msg" to "선택한 폴더('%s')에 실행할 시나리오가 없습니다.",
+            "batch.protect.confirmMsg" to "⚠️ 보호 모드가 활성화된 환경('[%s]')에서 폴더 '%s' 내 시나리오 %d개를 일괄 실행하시겠습니까?\n\nBaseURL: %s",
+            "batch.progress.title" to "폴더 시나리오 일괄 실행: %s",
+            "batch.progress.running" to "실행 중 (%d/%d): %s",
+            "batch.report.title" to "폴더 일괄 실행 결과 리포트",
+            "batch.report.summary" to "폴더: %s  |  환경: %s (%s)  |  총 %d건 (성공 %d / 실패 %d)  |  총 소요: %d ms%s",
+            "batch.report.cancelledTag" to "  [사용자 중단됨]",
+            "batch.report.col.status" to "결과",
+            "batch.report.col.scenario" to "시나리오",
+            "batch.report.col.steps" to "스텝",
+            "batch.report.col.duration" to "소요(ms)",
+            "batch.report.col.summary" to "요약 / 실패 사유",
+            "batch.report.stepCol.no" to "#",
+            "batch.report.stepCol.status" to "상태",
+            "batch.report.stepCol.endpoint" to "Method & Path",
+            "batch.report.stepCol.http" to "HTTP",
+            "batch.report.stepCol.duration" to "소요(ms)",
+            "batch.report.stepCol.detail" to "검증 / 상세",
+            "batch.report.openScenario" to "해당 시나리오 열기",
+            "batch.report.close" to "닫기",
+            "batch.report.pass" to "✅ 성공",
+            "batch.report.fail" to "❌ 실패"
         )
 
         private val EN_MESSAGES: Map<String, String> = mapOf(
@@ -635,7 +678,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.save" to "Save",
             "toolbar.newScenario" to "New Scenario",
             "toolbar.importExport" to "Import/Export ▾",
-            "toolbar.globalConfig" to "Common Headers",
+            "toolbar.globalConfig" to "Vars & Headers",
+            "toolbar.globalConfig.tooltip" to "Unified manager for Common Headers, Scenario Variables, Global Variables, Local Secrets & Dynamic Reference",
             "toolbar.variables" to "Variables",
             "toolbar.variables.tooltip" to "Manage Project Global Variables, Built-in Dynamic & Extracted Variables",
             "toolbar.curl" to "cURL",
@@ -1127,7 +1171,49 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "extracted.override.remove" to "- Delete",
             "extracted.override.promptTitle" to "Add Manual Runtime Override",
             "extracted.override.promptName" to "Enter variable name (e.g. accessToken):",
-            "extracted.override.promptValue" to "Enter temporary test value:"
+            "extracted.override.promptValue" to "Enter temporary test value:",
+
+            // [v0.4.1] Unified 5-Tab Variables & Headers Dialog Scope Badges + Inline Global Var Validation
+            "global.unified.title" to "Variables & Headers Manager",
+            "global.scope.scenario" to "[Scenario Only: %s]",
+            "global.scope.project" to "[Project Shared]",
+            "global.scope.projectGitIgnored" to "[Project Shared · Git Ignored]",
+            "global.scope.readonly" to "[Read-Only Reference]",
+            "global.tab.projectGlobals" to "Global Variables",
+            "global.tab.dynamicRef" to "Dynamic Variables",
+            "global.projectGlobals.inlineHint" to "Double-click any Key or Value cell to edit inline. Preserved across scenario switches and referenced via {{varName}}.",
+            "global.projectGlobals.dupKeyTitle" to "Duplicate Variable Key",
+            "global.projectGlobals.dupKeyMsg" to "A global variable named '%s' already exists. Restoring previous value.",
+            "global.projectGlobals.reservedKeyMsg" to "The '$' prefix is reserved for built-in dynamic variables. Restoring previous value.",
+            "global.dynamic.hint" to "Built-in dynamic variables evaluated live before request execution and cURL export. Click [Copy] or double-click a row to copy.",
+
+            // [v0.4.1] cURL Export Empty Header Option
+            "curl.export.includeEmptyHeaders" to "Include empty headers",
+
+            // [v0.4.1] Folder Regression Batch Run & Report
+            "explorer.action.runFolder" to "Run All Scenarios in Folder (Run Folder)",
+            "batch.emptyFolder.msg" to "No scenarios found inside folder '%s'.",
+            "batch.protect.confirmMsg" to "⚠️ Run all %d scenario(s) inside folder '%s' against protected environment '[%s]'?\n\nBaseURL: %s",
+            "batch.progress.title" to "Batch Running Folder: %s",
+            "batch.progress.running" to "Running (%d/%d): %s",
+            "batch.report.title" to "Folder Batch Run Report",
+            "batch.report.summary" to "Folder: %s  |  Env: %s (%s)  |  Total %d (Pass %d / Fail %d)  |  Time: %d ms%s",
+            "batch.report.cancelledTag" to "  [CANCELLED]",
+            "batch.report.col.status" to "Result",
+            "batch.report.col.scenario" to "Scenario",
+            "batch.report.col.steps" to "Steps",
+            "batch.report.col.duration" to "Time(ms)",
+            "batch.report.col.summary" to "Summary / Failure Reason",
+            "batch.report.stepCol.no" to "#",
+            "batch.report.stepCol.status" to "Status",
+            "batch.report.stepCol.endpoint" to "Method & Path",
+            "batch.report.stepCol.http" to "HTTP",
+            "batch.report.stepCol.duration" to "Time(ms)",
+            "batch.report.stepCol.detail" to "Assertions / Details",
+            "batch.report.openScenario" to "Open Scenario",
+            "batch.report.close" to "Close",
+            "batch.report.pass" to "✅ PASS",
+            "batch.report.fail" to "❌ FAIL"
         )
     }
 }

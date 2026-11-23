@@ -3,8 +3,8 @@ package com.maekom.apirunner.engine
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
 
-// [v0.4.0] CurlManagerDialog 내보내기 미리보기 옵션(환경 BaseURL·공통 헤더·변수 치환 토글 및 Secret 마스킹 옵션) 지원
-// 변경 의도: v0.3.1 빈 스텝 헤더 공통 헤더 폴백 병합 규칙을 그대로 유지하면서 원문/마스킹/치환 여부 선택 복사 지원
+// [v0.4.1] cURL 내보내기 시 최종 값이 null/Blank인 헤더·Query Parameter 기본 제외 및 '빈 값 헤더 포함(includeEmptyHeaders)' 옵션 추가
+// 변경 의도: 불필요한 빈 헤더/파라미터가 없는 깔끔한 cURL 명령어를 기본 생성하되, 특수 디버깅 시에만 빈 헤더를 선택적으로 포함
 object CurlExporter {
 
     /**
@@ -18,7 +18,8 @@ object CurlExporter {
         secrets: Map<String, String> = emptyMap(),
         projectGlobalVariables: Map<String, String> = emptyMap(),
         resolveEnvironmentAndVars: Boolean = true,
-        maskSecrets: Boolean = false
+        maskSecrets: Boolean = false,
+        includeEmptyHeaders: Boolean = false
     ): String {
         val effectiveGlobals = linkedMapOf<String, String>().apply {
             putAll(scenario.globalVariables)
@@ -48,7 +49,8 @@ object CurlExporter {
                 queryParams = step.queryParams,
                 runtimeContext = runtimeContext,
                 secrets = secrets,
-                globalVariables = effectiveGlobals
+                globalVariables = effectiveGlobals,
+                skipBlankValues = true
             )
             val mergedHeaders = VariableResolver.mergeHeaders(scenario.effectiveEnabledHeadersMap(), step.headers)
             finalHeaders = VariableResolver.resolveMap(
@@ -66,7 +68,8 @@ object CurlExporter {
         } else {
             fullUrl = VariableResolver.appendQueryParams(
                 url = step.url,
-                queryParams = step.queryParams
+                queryParams = step.queryParams,
+                skipBlankValues = true
             )
             finalHeaders = LinkedHashMap(step.headers)
             finalBody = step.body
@@ -112,10 +115,14 @@ object CurlExporter {
         parts.add(firstLine)
 
         for ((k, v) in finalHeaders) {
-            val displayVal = if (maskSecrets && k.trim().lowercase() in secretHeaderKeys) {
-                "****"
-            } else {
-                maskIfNeeded(v)
+            val isBlankVal = v.isBlank()
+            if (isBlankVal && !includeEmptyHeaders) {
+                continue
+            }
+            val displayVal = when {
+                isBlankVal -> ""
+                maskSecrets && k.trim().lowercase() in secretHeaderKeys -> "****"
+                else -> maskIfNeeded(v)
             }
             parts.add("  -H ${shellQuote("$k: $displayVal")}")
         }
@@ -137,7 +144,8 @@ object CurlExporter {
         secrets: Map<String, String> = emptyMap(),
         projectGlobalVariables: Map<String, String> = emptyMap(),
         resolveEnvironmentAndVars: Boolean = true,
-        maskSecrets: Boolean = false
+        maskSecrets: Boolean = false,
+        includeEmptyHeaders: Boolean = false
     ): String {
         return buildString {
             appendLine("#!/usr/bin/env bash")
@@ -159,7 +167,8 @@ object CurlExporter {
                         secrets = secrets,
                         projectGlobalVariables = projectGlobalVariables,
                         resolveEnvironmentAndVars = resolveEnvironmentAndVars,
-                        maskSecrets = maskSecrets
+                        maskSecrets = maskSecrets,
+                        includeEmptyHeaders = includeEmptyHeaders
                     )
                     cmd.lines().forEach { appendLine("# $it") }
                     appendLine()
@@ -173,7 +182,8 @@ object CurlExporter {
                             secrets = secrets,
                             projectGlobalVariables = projectGlobalVariables,
                             resolveEnvironmentAndVars = resolveEnvironmentAndVars,
-                            maskSecrets = maskSecrets
+                            maskSecrets = maskSecrets,
+                            includeEmptyHeaders = includeEmptyHeaders
                         )
                     )
                     appendLine()
