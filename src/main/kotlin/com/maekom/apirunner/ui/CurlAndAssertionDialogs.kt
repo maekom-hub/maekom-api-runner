@@ -46,6 +46,10 @@ import javax.swing.event.DocumentListener
 // 변경 의도: cURL 복사 전 실시간 명령어 확인·시크릿 마스킹·스마트 파싱(BaseURL 제거/중복 공통 헤더 제외)과
 //          No-Code JSONPath 응답 검증 규칙의 직관적인 팝업 등록을 지원
 
+// [v0.4.5] cURL 내보내기 미리보기와 [클립보드에 복사]가 단일 공통 생성 함수(generateCurrentExportText)를 공유하고
+//          프로젝트 전역 변수 Secret 값(projectGlobalSecretValues)까지 포함해 Secret 마스킹(****)을 일관 적용하도록 개선
+// 변경 의도: 체크박스 토글 즉시 미리보기 갱신과 복사 결과물의 100% 일치 보장
+
 class CurlManagerDialog(
     project: Project,
     private val scenario: ApiScenario,
@@ -53,6 +57,7 @@ class CurlManagerDialog(
     private val runtimeContext: Map<String, String>,
     private val secrets: Map<String, String>,
     private val projectGlobalVariables: Map<String, String>,
+    private val projectGlobalSecretValues: Set<String> = emptySet(),
     private val onAddNewStep: (ParsedCurlResult) -> Unit,
     private val onOverwriteCurrentStep: (ParsedCurlResult) -> Unit
 ) : DialogWrapper(project, true) {
@@ -147,8 +152,10 @@ class CurlManagerDialog(
         includeEmptyHeadersCheckbox.addActionListener { refreshExportPreview() }
 
         exportCopyBtn.addActionListener {
-            val content = exportPreviewArea.text
+            val content = generateCurrentExportText()
             if (content.isNotBlank()) {
+                exportPreviewArea.text = content
+                exportPreviewArea.caretPosition = 0
                 CopyPasteManager.getInstance().setContents(StringSelection(content))
                 exportStatusLabel.text = I18nManager.t("curl.export.copiedStatus")
             }
@@ -168,11 +175,12 @@ class CurlManagerDialog(
         return panel
     }
 
-    private fun refreshExportPreview() {
+    // [v0.4.5] 미리보기 에디터와 [클립보드에 복사] 버튼이 100% 동일한 마스킹/옵션 결과를 사용하도록 단일 공통 생성 함수로 통합
+    private fun generateCurrentExportText(): String {
         val resolveEnv = resolveEnvCheckbox.isSelected
         val maskSec = maskSecretsCheckbox.isSelected
         val includeEmpty = includeEmptyHeadersCheckbox.isSelected
-        val output = if (targetStepRadio.isSelected && activeStep != null) {
+        return if (targetStepRadio.isSelected && activeStep != null) {
             CurlExporter.exportStep(
                 step = activeStep,
                 scenario = scenario,
@@ -181,7 +189,8 @@ class CurlManagerDialog(
                 projectGlobalVariables = projectGlobalVariables,
                 resolveEnvironmentAndVars = resolveEnv,
                 maskSecrets = maskSec,
-                includeEmptyHeaders = includeEmpty
+                includeEmptyHeaders = includeEmpty,
+                extraSecretValues = projectGlobalSecretValues
             )
         } else {
             if (scenario.steps.isEmpty()) {
@@ -194,11 +203,15 @@ class CurlManagerDialog(
                     projectGlobalVariables = projectGlobalVariables,
                     resolveEnvironmentAndVars = resolveEnv,
                     maskSecrets = maskSec,
-                    includeEmptyHeaders = includeEmpty
+                    includeEmptyHeaders = includeEmpty,
+                    extraSecretValues = projectGlobalSecretValues
                 )
             }
         }
-        exportPreviewArea.text = output
+    }
+
+    private fun refreshExportPreview() {
+        exportPreviewArea.text = generateCurrentExportText()
         exportPreviewArea.caretPosition = 0
         exportStatusLabel.text = " "
     }

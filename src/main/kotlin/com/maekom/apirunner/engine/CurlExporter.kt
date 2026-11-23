@@ -2,9 +2,12 @@ package com.maekom.apirunner.engine
 
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
-// [v0.4.1] cURL 내보내기 시 최종 값이 null/Blank인 헤더·Query Parameter 기본 제외 및 '빈 값 헤더 포함(includeEmptyHeaders)' 옵션 추가
-// 변경 의도: 불필요한 빈 헤더/파라미터가 없는 깔끔한 cURL 명령어를 기본 생성하되, 특수 디버깅 시에만 빈 헤더를 선택적으로 포함
+// [v0.4.5] cURL 내보내기 Secret 마스킹(****) 완벽 적용 (개별 스텝 Secret 헤더, 활성 공통 헤더 Secret 및 빈 값 폴백,
+//          로컬 시크릿 {{secretKey}}의 URL/Query/Header/Body 치환 및 URL 인코딩 값까지 예외 없이 마스킹)
+// 변경 의도: 단일 공통 생성 경로에서 대소문자 무관(equalsIgnoreCase) Secret 헤더 판별과 시크릿 치환·후처리 마스킹을 일관 보장
 object CurlExporter {
 
     /**
@@ -19,11 +22,19 @@ object CurlExporter {
         projectGlobalVariables: Map<String, String> = emptyMap(),
         resolveEnvironmentAndVars: Boolean = true,
         maskSecrets: Boolean = false,
-        includeEmptyHeaders: Boolean = false
+        includeEmptyHeaders: Boolean = false,
+        stepSecretHeaderKeys: Set<String> = emptySet(),
+        extraSecretValues: Set<String> = emptySet()
     ): String {
         val effectiveGlobals = linkedMapOf<String, String>().apply {
             putAll(scenario.globalVariables)
             putAll(projectGlobalVariables)
+        }
+        // [v0.4.5] 마스킹 활성화 시 로컬 시크릿({{secretKey}})을 치환 단계부터 ****로 대체하여 URL/Query/Header/Body 어디서든 누출 차단
+        val effectiveSecrets = if (maskSecrets) {
+            secrets.mapValues { (_, v) -> if (v.isNotEmpty()) "****" else "" }
+        } else {
+            secrets
         }
 
         val fullUrl: String
@@ -34,13 +45,13 @@ object CurlExporter {
             val resolvedBaseUrl = VariableResolver.resolve(
                 template = scenario.baseUrl,
                 runtimeContext = runtimeContext,
-                secrets = secrets,
+                secrets = effectiveSecrets,
                 globalVariables = effectiveGlobals
             )
             val resolvedStepUrl = VariableResolver.resolve(
                 template = step.url,
                 runtimeContext = runtimeContext,
-                secrets = secrets,
+                secrets = effectiveSecrets,
                 globalVariables = effectiveGlobals
             )
             val combinedUrl = VariableResolver.combineUrl(resolvedBaseUrl, resolvedStepUrl)
@@ -48,7 +59,7 @@ object CurlExporter {
                 url = combinedUrl,
                 queryParams = step.queryParams,
                 runtimeContext = runtimeContext,
-                secrets = secrets,
+                secrets = effectiveSecrets,
                 globalVariables = effectiveGlobals,
                 skipBlankValues = true
             )
@@ -56,13 +67,13 @@ object CurlExporter {
             finalHeaders = VariableResolver.resolveMap(
                 source = mergedHeaders,
                 runtimeContext = runtimeContext,
-                secrets = secrets,
+                secrets = effectiveSecrets,
                 globalVariables = effectiveGlobals
             )
             finalBody = VariableResolver.resolve(
                 template = step.body,
                 runtimeContext = runtimeContext,
-                secrets = secrets,
+                secrets = effectiveSecrets,
                 globalVariables = effectiveGlobals
             )
         } else {
@@ -75,20 +86,47 @@ object CurlExporter {
             finalBody = step.body
         }
 
+        // [v0.4.5] 대소문자 무관(lowercase) Secret 헤더 키 집합: 활성 공통 헤더 Secret + 개별 스텝 Secret 헤더 키
         val secretHeaderKeys = if (maskSecrets) {
-            scenario.commonHeaders
-                .filter { it.enabled && it.secret && it.key.trim().isNotEmpty() }
-                .map { it.key.trim().lowercase() }
-                .toSet()
+            buildSet {
+                scenario.commonHeaders
+                    .filter { it.enabled && it.secret && it.key.trim().isNotEmpty() }
+                    .forEach { add(it.key.trim().lowercase()) }
+                stepSecretHeaderKeys
+                    .map { it.trim().lowercase() }
+                    .filter { it.isNotEmpty() }
+                    .forEach { add(it) }
+            }
         } else {
             emptySet()
         }
+
+        // [v0.4.5] 잔여 민감 값 후처리 마스킹 목록(원본 + URL 인코딩 + 변수 치환된 Secret 공통 헤더 값 포함)
         val secretValues = if (maskSecrets) {
             buildList {
-                secrets.values.filter { it.isNotEmpty() }.forEach { add(it) }
+                secrets.values.filter { it.isNotEmpty() }.forEach { raw ->
+                    add(raw)
+                    add(URLEncoder.encode(raw, StandardCharsets.UTF_8))
+                }
+                extraSecretValues.filter { it.isNotEmpty() }.forEach { raw ->
+                    add(raw)
+                    add(URLEncoder.encode(raw, StandardCharsets.UTF_8))
+                }
                 scenario.commonHeaders
                     .filter { it.enabled && it.secret && it.value.isNotEmpty() }
-                    .forEach { add(it.value) }
+                    .forEach { item ->
+                        add(item.value)
+                        val resolved = VariableResolver.resolve(
+                            template = item.value,
+                            runtimeContext = runtimeContext,
+                            secrets = secrets,
+                            globalVariables = effectiveGlobals
+                        )
+                        if (resolved.isNotEmpty()) {
+                            add(resolved)
+                            add(URLEncoder.encode(resolved, StandardCharsets.UTF_8))
+                        }
+                    }
             }.distinct().sortedByDescending { it.length }
         } else {
             emptyList()
@@ -98,7 +136,7 @@ object CurlExporter {
             if (!maskSecrets || secretValues.isEmpty()) return raw
             var out = raw
             for (sec in secretValues) {
-                if (out.contains(sec)) out = out.replace(sec, "****")
+                if (sec.isNotEmpty() && out.contains(sec)) out = out.replace(sec, "****")
             }
             return out
         }
@@ -145,7 +183,8 @@ object CurlExporter {
         projectGlobalVariables: Map<String, String> = emptyMap(),
         resolveEnvironmentAndVars: Boolean = true,
         maskSecrets: Boolean = false,
-        includeEmptyHeaders: Boolean = false
+        includeEmptyHeaders: Boolean = false,
+        extraSecretValues: Set<String> = emptySet()
     ): String {
         return buildString {
             appendLine("#!/usr/bin/env bash")
@@ -168,7 +207,8 @@ object CurlExporter {
                         projectGlobalVariables = projectGlobalVariables,
                         resolveEnvironmentAndVars = resolveEnvironmentAndVars,
                         maskSecrets = maskSecrets,
-                        includeEmptyHeaders = includeEmptyHeaders
+                        includeEmptyHeaders = includeEmptyHeaders,
+                        extraSecretValues = extraSecretValues
                     )
                     cmd.lines().forEach { appendLine("# $it") }
                     appendLine()
@@ -183,7 +223,8 @@ object CurlExporter {
                             projectGlobalVariables = projectGlobalVariables,
                             resolveEnvironmentAndVars = resolveEnvironmentAndVars,
                             maskSecrets = maskSecrets,
-                            includeEmptyHeaders = includeEmptyHeaders
+                            includeEmptyHeaders = includeEmptyHeaders,
+                            extraSecretValues = extraSecretValues
                         )
                     )
                     appendLine()

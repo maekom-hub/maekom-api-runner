@@ -90,6 +90,7 @@ import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JScrollBar
+import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.JTabbedPane
 import javax.swing.JTable
@@ -305,9 +306,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         wrapStyleWord = false
     }
 
-    // [v0.4.4] 메인 패널 내 입력 필드(JTextComponent) 바깥의 빈 배경·라벨·여백 좌클릭 시 포커스 테두리 깔끔하게 해제
-    // 변경 의도: 코드 에디터나 외부 모달에 간섭하지 않고 ScenarioToolWindowPanel 하위 클릭에만 한정 동작하며,
-    //          테이블 인라인 셀 편집 중이었다면 값을 먼저 커밋(stopAllTableEdits)한 뒤 포커스를 해제하고 dispose()에서 리스너 제거
+    // [v0.4.5] 응답 본문(JSON/Raw Text) 에디터·입력 필드 포커스 잔류(파란 테두리) 완전 해제용 0x0 비가시 포커스 흡수 컴포넌트
+    // 변경 의도: clearGlobalFocusOwner()만으로는 IntelliJ Darcula LAF의 JScrollPane/EditorTextField 포커스 링이 남는 문제를 해결하기 위해
+    //          비가시 포커스 싱크로 포커스를 확실히 회수하고 직전 포커스 소유자 및 상위 래퍼 컨테이너를 명시적 repaint() 처리
+    private val focusSinkComponent = JPanel().apply {
+        isFocusable = true
+        isOpaque = false
+        preferredSize = Dimension(0, 0)
+        minimumSize = Dimension(0, 0)
+        maximumSize = Dimension(0, 0)
+    }
+
+    // [v0.4.5] 메인 패널 내 입력 필드/응답 본문 에디터 바깥의 빈 배경·라벨·여백 좌클릭 시 포커스 회수 및 Darcula 포커스 테두리 즉시 제거
     private val backgroundFocusClearListener = AWTEventListener { event ->
         val mouseEvent = event as? MouseEvent ?: return@AWTEventListener
         if (mouseEvent.id != MouseEvent.MOUSE_PRESSED) return@AWTEventListener
@@ -315,18 +325,27 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
         val clickedComp = mouseEvent.component ?: return@AWTEventListener
         if (!SwingUtilities.isDescendingFrom(clickedComp, this@ScenarioToolWindowPanel)) return@AWTEventListener
-
-        val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
-        val focusOwner = focusManager.focusOwner ?: return@AWTEventListener
-        if (!SwingUtilities.isDescendingFrom(focusOwner, this@ScenarioToolWindowPanel)) return@AWTEventListener
-        if (focusOwner !is JTextComponent && !isAnyTableEditing()) return@AWTEventListener
-
         if (isInteractiveTarget(clickedComp)) return@AWTEventListener
 
+        val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        val oldFocusOwner = focusManager.focusOwner
+        if (oldFocusOwner == null || oldFocusOwner === focusSinkComponent) {
+            if (isAnyTableEditing()) stopAllTableEdits()
+            return@AWTEventListener
+        }
+        if (!SwingUtilities.isDescendingFrom(oldFocusOwner, this@ScenarioToolWindowPanel)) return@AWTEventListener
+
+        val repaintTargets = collectFocusWrapperAncestors(oldFocusOwner)
         if (isAnyTableEditing()) {
             stopAllTableEdits()
         }
-        focusManager.clearGlobalFocusOwner()
+        if (!focusSinkComponent.requestFocusInWindow()) {
+            focusManager.clearGlobalFocusOwner()
+        }
+        repaintTargets.forEach { it.repaint() }
+        SwingUtilities.invokeLater {
+            repaintTargets.forEach { it.repaint() }
+        }
     }
 
     init {
@@ -378,6 +397,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
 
         add(mainSplitter, BorderLayout.CENTER)
+        add(focusSinkComponent, BorderLayout.SOUTH)
 
         addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) {
@@ -1742,6 +1762,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
+        val projectGlobals = storage.loadGlobalVariables()
+        val projectGlobalSecretValues = projectGlobals
+            .filter { it.enabled && it.secret && it.value.isNotEmpty() }
+            .map { it.value }
+            .toSet()
+
         val dialog = CurlManagerDialog(
             project = project,
             scenario = currentScenario,
@@ -1749,6 +1775,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             runtimeContext = LinkedHashMap(lastRuntimeContext),
             secrets = storage.loadSecrets(),
             projectGlobalVariables = storage.loadEnabledGlobalVariablesMap(),
+            projectGlobalSecretValues = projectGlobalSecretValues,
             onAddNewStep = { parsed -> applyImportedCurlAsNewStep(parsed) },
             onOverwriteCurrentStep = { parsed -> applyImportedCurlToCurrentStep(parsed) }
         )
@@ -3243,9 +3270,29 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             assertionsTable.isEditing ||
             extractedVarsTable.isEditing
 
+    // [v0.4.5] 포커스 해제 시 Darcula 포커스 링 테두리가 그려지는 직전 포커스 컴포넌트 및 상위 JScrollPane/EditorTextField 래퍼 수집
+    private fun collectFocusWrapperAncestors(focusOwner: Component): List<Component> {
+        val targets = mutableListOf<Component>()
+        var current: Component? = focusOwner
+        while (current != null && current !== this) {
+            val className = current.javaClass.name
+            if (current === focusOwner ||
+                current is JScrollPane ||
+                current is JTextComponent ||
+                className.contains("EditorTextField") ||
+                className.contains("EditorComponent")
+            ) {
+                targets.add(current)
+            }
+            current = current.parent
+        }
+        return targets
+    }
+
     private fun isInteractiveTarget(component: Component): Boolean {
         var current: Component? = component
         while (current != null && current !== this) {
+            val className = current.javaClass.name
             if (current is JTextComponent ||
                 current is AbstractButton ||
                 current is JComboBox<*> ||
@@ -3256,7 +3303,9 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 current is JTabbedPane ||
                 current is JScrollBar ||
                 current is JMenuItem ||
-                current is LanguageSegmentSwitch
+                current is LanguageSegmentSwitch ||
+                className.contains("EditorTextField") ||
+                className.contains("EditorComponent")
             ) {
                 return true
             }

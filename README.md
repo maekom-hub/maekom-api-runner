@@ -39,10 +39,10 @@
 2. **요청 추가:** Spring 컨트롤러 메서드 옆 **🌶️ 고추 아이콘**을 클릭해 단건 실행하거나 현재 시나리오에 스텝을 추가합니다.
 3. **체이닝 & 관리:** 응답 JSON에서 필드를 추출(`{{변수명}}`)해 다음 스텝에 연결하고, **`[시나리오 관리]`** 팝업에서 폴더별로 시나리오를 정리하세요.
 
-### 🆕 `v0.4.4` 최신 업데이트
+### 🆕 `v0.4.5` 최신 업데이트
 
-- **공통 헤더·변수 테이블 행 순서 변경(드래그 앤 드롭 + `▲` / `▼`):** `[공통 헤더·변수 관리]` 내 편집 가능한 4개 탭(`공통 헤더`, `프로젝트 전역 변수`, `시나리오 변수`, `로컬 시크릿`)에 `DropMode.INSERT_ROWS` 마우스 드래그 앤 드롭과 `▲` / `▼` 순서 이동 버튼(단일·다중 선택 및 경계 자동 비활성화)을 추가하고, 저장 시 변경된 순서가 JSON 파일에 영속 보존되도록 개선 (`시나리오 변수` 탭에서 스텝 추출 변수의 표시 순서를 바꿔도 실제 스텝 실행 순서는 불변)
-- **메인 UI 빈 배경 클릭 시 입력 포커스 자동 해제:** 메인 ToolWindow 내부의 `Path`, `스텝 별칭`, `기대 상태`, `대기(ms)` 등 입력 필드 편집 후 빈 패널·라벨·여백을 좌클릭하면 포커스 테두리가 즉시 해제되며, 테이블 셀 편집 중일 때는 입력값을 안전하게 커밋한 뒤 포커스를 해제(IDE 코드 에디터 및 외부 팝업 간섭 없음)
+- **`cURL` 내보내기/복사 `Secret 항목 마스킹(****)` 완벽 적용:** `현재 선택된 스텝` 및 `전체 시나리오` 모드 모두에서 개별 스텝 Secret 헤더, 활성 공통 헤더 Secret(대소문자 무관 + 빈 값 폴백 포함), 로컬 시크릿(`{{secretKey}}`)의 URL/Query(특수문자 포함)/Header/Body 치환값을 단일 공통 생성 함수로 예외 없이 `****` 마스킹(미리보기·클립보드 복사 100% 일치)
+- **메인 UI `응답 본문(JSON / Raw Text)` 에디터 포커스 잔류(파란 테두리) 완전 해제:** 비가시 `0x0` 포커스 흡수 컴포넌트(`focusSinkComponent`)로 포커스를 확실히 회수하고 직전 포커스 컴포넌트 및 상위 `JScrollPane`/`EditorTextField` 래퍼에 명시적 `repaint()`를 수행해 Darcula 파란 테두리 잔상까지 즉시 제거
 
 ---
 
@@ -62,10 +62,10 @@
 2. **Capture Endpoints:** Click the **🌶️ chili icon** next to any Spring controller method to run immediately or append to your scenario.
 3. **Chain & Organize:** Extract JSON response values into `{{variables}}` for subsequent steps and organize scenarios into folders via **`[Scenarios]`**.
 
-### 🆕 What's New in `v0.4.4`
+### 🆕 What's New in `v0.4.5`
 
-- **Table Row Reordering (Drag & Drop + `▲` / `▼`):** Added `DropMode.INSERT_ROWS` mouse drag-and-drop and `▲` / `▼` buttons (with multi-row selection preservation and boundary disable states) across all 4 editable tabs (`Common Headers`, `Project Global Variables`, `Scenario Variables`, `Local Secrets`) in `Common Headers & Variables`, persisting the updated order to disk without affecting step execution order.
-- **Click-Outside Focus Release in Main UI:** Left-clicking empty background panels, margins, or labels inside the Maekom ToolWindow cleanly clears focus outlines from text fields (`Path`, `Step Alias`, `Expected`, `Delay(ms)`, etc.) while safely committing active table cell edits and leaving IDE editors untouched.
+- **Complete `Mask Secret Items (****)` in cURL Export & Copy:** Masks secret step headers, enabled secret Common Headers (case-insensitive, including blank-value fallbacks), and local secrets (`{{secretKey}}`) across URL paths, Query params (even with URL-encoded special chars), Headers, and Body in both Single Step and Full Scenario modes via a single shared generator for preview and clipboard copy.
+- **Complete Focus Ring Dismissal for Response Body & Editors:** Uses an invisible `0x0` focus sink component (`focusSinkComponent`) plus explicit `repaint()` on the previously focused component and enclosing `JScrollPane`/`EditorTextField` wrappers so Darcula's blue focus outline disappears immediately when clicking empty background areas.
 
 ---
 
@@ -76,6 +76,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.4.5` | 2026-11-23 | `cURL` 내보내기/복사 시 `Secret 항목 마스킹(****)` 완벽 적용(공통/스텝 Secret 헤더 대소문자 무관·로컬 시크릿 URL/Query/Header/Body 단일 경로 마스킹) 및 `응답 본문` 에디터 빈 배경 클릭 시 파란 포커스 테두리 잔류 완전 수정 / Fix `Mask Secret Items (****)` in cURL Export/Copy across all secret sources & eliminate lingering Darcula blue focus ring on Response Body editors when clicking empty background | [maekom-api-runner-0.4.5.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.5/maekom-api-runner-0.4.5.zip) |
 | `v0.4.4` | 2026-11-23 | `[공통 헤더·변수 관리]` 편집 가능 4개 탭 행 순서 변경(드래그 앤 드롭 + `▲`/`▼` 버튼, 순서 영속 저장) 및 메인 UI 빈 배경 클릭 시 입력 포커스 자동 해제 UX 개선 / Table row reordering (Drag & Drop + `▲`/`▼`, persisted order) across 4 editable tabs in `Common Headers & Variables` & click-outside focus release in main ToolWindow | [maekom-api-runner-0.4.4.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.4/maekom-api-runner-0.4.4.zip) |
 | `v0.4.3` | 2026-11-23 | `시나리오 변수` 탭에 스텝별 `응답 변수 추출` 통합 표시(`출처` 컬럼) 및 변수명 변경(참조 일괄 치환)·값 Override·삭제 양방향 현행화 / Unified `Scenario Variables` & step `Extract Rules` view with `Source` column and bidirectional rename/override/delete sync | [maekom-api-runner-0.4.3.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.3/maekom-api-runner-0.4.3.zip) |
 | `v0.4.2` | 2026-11-23 | 상단 툴바 버튼·창 타이틀 **`공통 헤더·변수 관리`** 통일 및 5개 탭 명칭 간소화·순서 재배치(`공통 헤더 → 프로젝트 전역 변수 → 시나리오 변수 → 로컬 시크릿 → 내장 동적 변수·헤더`) / Standardize **`Common Headers & Variables`** label and reorder simplified 5 tabs | [maekom-api-runner-0.4.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.2/maekom-api-runner-0.4.2.zip) |

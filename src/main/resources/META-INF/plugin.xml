@@ -18,6 +18,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.4.5</h3>
+    <ul>
+      <li><b>Complete cURL Secret Masking (<code>****</code>):</b> Fixed <code>Mask Secret Items (****)</code> in <code>CurlManagerDialog</code> so single-step and full-scenario exports consistently mask step secret headers, enabled secret Common Headers (case-insensitive, including blank-value fallbacks), and local secrets (<code>{{secretKey}}</code>) across URL paths, Query params, Headers, and Body via a single shared generator for preview and clipboard copy.</li>
+      <li><b>Response Body &amp; Editor Focus Ring Fix:</b> Added an invisible <code>0x0</code> focus sink component (<code>focusSinkComponent</code>) and explicit <code>repaint()</code> on the previously focused component and enclosing <code>JScrollPane</code>/<code>EditorTextField</code> wrappers so Darcula's blue focus border disappears immediately when clicking empty background areas.</li>
+    </ul>
     <h3>v0.4.4</h3>
     <ul>
       <li><b>Table Row Reordering (Drag &amp; Drop + <code>▲</code>/<code>▼</code>):</b> Added <code>DropMode.INSERT_ROWS</code> drag-and-drop and <code>▲</code>/<code>▼</code> reorder buttons (supporting multi-row selection and boundary disable states) across all 4 editable tabs (<code>Common Headers</code>, <code>Project Global Variables</code>, <code>Scenario Variables</code>, <code>Local Secrets</code>) in <code>Common Headers &amp; Variables</code> with persistent JSON order preservation and invariant step execution order.</li>

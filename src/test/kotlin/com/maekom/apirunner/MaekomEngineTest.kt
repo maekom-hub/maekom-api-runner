@@ -1129,4 +1129,81 @@ class MaekomEngineTest {
         assertEquals("StepB", scenario.steps[1].name)
         assertEquals("tokB", scenario.steps[1].extractRules[0].varName)
     }
+
+    // [v0.4.5] cURL 내보내기 Secret 마스킹(****) 단위 테스트:
+    //          개별 스텝 Secret 헤더, 활성 공통 헤더 Secret(대소문자 무관 + 빈 값 폴백),
+    //          로컬 시크릿({{secretKey}})의 URL/Query(특수문자 포함)/Header/Body 치환 및 전체 시나리오 스크립트 마스킹 검증
+    @Test
+    fun `curl exporter masks step secret headers, common secret headers case-insensitively, and local secrets everywhere`() {
+        val secrets = linkedMapOf(
+            "apiKey" to "sk-live/abc+123==",
+            "bodySecret" to "my-super-password!"
+        )
+        val scenario = ApiScenario(
+            name = "secret-curl-test",
+            baseUrl = "https://api.example.com",
+            commonHeaders = mutableListOf(
+                CommonHeaderItem(enabled = true, key = "X-Common-Secret", value = "common-secret-val", secret = true),
+                CommonHeaderItem(enabled = true, key = "X-Normal-Header", value = "public-val", secret = false)
+            ),
+            steps = mutableListOf(
+                ApiStep(
+                    name = "Secret Step",
+                    method = "POST",
+                    url = "/v1/users/{{apiKey}}",
+                    queryParams = mutableListOf(
+                        QueryParamItem(enabled = true, key = "token", value = "{{apiKey}}")
+                    ),
+                    headers = linkedMapOf(
+                        "x-common-secret" to "", // case-insensitive blank fallback to Secret common header
+                        "X-Step-Secret" to "step-only-secret",
+                        "Authorization" to "Bearer {{apiKey}}"
+                    ),
+                    body = """{"password":"{{bodySecret}}","public":"ok"}"""
+                )
+            )
+        )
+
+        val maskedSingle = CurlExporter.exportStep(
+            step = scenario.steps[0],
+            scenario = scenario,
+            secrets = secrets,
+            resolveEnvironmentAndVars = true,
+            maskSecrets = true,
+            stepSecretHeaderKeys = setOf("x-step-secret")
+        )
+        assertFalse(maskedSingle.contains("sk-live"), "maskedSingle=$maskedSingle")
+        assertFalse(maskedSingle.contains("common-secret-val"), "maskedSingle=$maskedSingle")
+        assertFalse(maskedSingle.contains("step-only-secret"), "maskedSingle=$maskedSingle")
+        assertFalse(maskedSingle.contains("my-super-password!"), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains("/v1/users/****?token=****"), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains("-H 'X-Common-Secret: ****'", ignoreCase = true), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains("-H 'X-Step-Secret: ****'"), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains("-H 'Authorization: Bearer ****'"), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains("-H 'X-Normal-Header: public-val'"), "maskedSingle=$maskedSingle")
+        assertTrue(maskedSingle.contains(""""password":"****""""), "maskedSingle=$maskedSingle")
+
+        val unmaskedSingle = CurlExporter.exportStep(
+            step = scenario.steps[0],
+            scenario = scenario,
+            secrets = secrets,
+            resolveEnvironmentAndVars = true,
+            maskSecrets = false,
+            stepSecretHeaderKeys = setOf("x-step-secret")
+        )
+        assertTrue(unmaskedSingle.contains("common-secret-val"), "unmaskedSingle=$unmaskedSingle")
+        assertTrue(unmaskedSingle.contains("step-only-secret"), "unmaskedSingle=$unmaskedSingle")
+        assertTrue(unmaskedSingle.contains("my-super-password!"), "unmaskedSingle=$unmaskedSingle")
+
+        val maskedScenario = CurlExporter.exportScenario(
+            scenario = scenario,
+            secrets = secrets,
+            resolveEnvironmentAndVars = true,
+            maskSecrets = true
+        )
+        assertFalse(maskedScenario.contains("sk-live"), "maskedScenario=$maskedScenario")
+        assertFalse(maskedScenario.contains("common-secret-val"), "maskedScenario=$maskedScenario")
+        assertFalse(maskedScenario.contains("my-super-password!"), "maskedScenario=$maskedScenario")
+        assertTrue(maskedScenario.contains("-H 'X-Common-Secret: ****'", ignoreCase = true), "maskedScenario=$maskedScenario")
+    }
 }
