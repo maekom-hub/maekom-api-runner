@@ -10,7 +10,7 @@
     <ul>
       <li>🌶️ <b>Multi-Step API Chaining &amp; Auto-Sampling:</b> Chili gutter markers on Spring controllers auto-sample <code>@RequestParam</code>/<code>@ModelAttribute</code>/<code>@RequestBody</code> DTOs &amp; records, chain responses via one-click <code>JsonPath</code> extraction, and enforce Fail-Fast (컨트롤러 고추 아이콘 자동 샘플링, JsonPath 원클릭 변수 추출 및 Fail-Fast 체이닝)</li>
       <li>🌍 <b>Environment Profiles &amp; Ignore SSL:</b> Persistent <code>Local</code> (auto-detected <code>server.port</code>) and <code>DEV</code>/<code>STG</code>/<code>PRD</code> profiles (<code>.maekom/environments.json</code>) with self-signed HTTPS ignore (환경별 BaseURL 영속 전환 및 SSL 무시)</li>
-      <li>🌐 <b>Layered Variables &amp; Common Headers:</b> 8 live dynamic variables (<code>{{$kstNow}}</code>, <code>{{$uuid}}</code>, etc.), extracted variables, project Global Variables, Scenario Variables, Local Secrets, Bulk JSON Import &amp; duplicate validator (동적·추출·전역·시나리오·시크릿 계층 관리, JSON 일괄 입력 및 중복 검증)</li>
+      <li>🌐 <b>Layered Variables &amp; Common Headers:</b> 8 live dynamic variables (<code>{{$kstNow}}</code>, <code>{{$uuid}}</code>, etc.), extracted variables, project Global Variables, Scenario Variables (with bidirectional step extractor sync), Local Secrets, Bulk JSON Import, Drag &amp; Drop / <code>▲</code><code>▼</code> row reordering &amp; duplicate validator (동적·추출·전역·시나리오·시크릿 통합 관리, 양방향 추출 동기화, 행 드래그·▲▼ 순서 변경 및 JSON 일괄 입력)</li>
       <li>🗂️ <b>Folder-Based Scenario Tree Manager:</b> Organize scenarios into nested folders under <code>.maekom/scenarios/</code> (100% compatible with legacy root JSON files) with Drag &amp; Drop moves/reordering, <code>Base Info</code> (<code>Name</code>/<code>Description</code>) editing, Import/Export &amp; 30s Auto-Save (폴더 기반 시나리오 트리, 드래그 앤 드롭 이동·정렬, Base Info 편집 및 스마트 자동 저장)</li>
       <li>📋 <b>Unified cURL Export/Import, No-Code Assertions &amp; KO/EN Switch:</b> Live cURL export preview &amp; smart multiline import, 8-operator JSONPath response body assertions, single-step missing variable guard with manual extracted-var override, and native title bar <b>한국어 | English</b> switch (cURL 내보내기 미리보기·스마트 가져오기, 8종 JSONPath 응답 검증, 선행 변수 누락 보호·수동 Override 및 네이티브 타이틀 바 한/영 전환)</li>
     </ul>
@@ -18,6 +18,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.4.4</h3>
+    <ul>
+      <li><b>Table Row Reordering (Drag &amp; Drop + <code>▲</code>/<code>▼</code>):</b> Added <code>DropMode.INSERT_ROWS</code> drag-and-drop and <code>▲</code>/<code>▼</code> reorder buttons (supporting multi-row selection and boundary disable states) across all 4 editable tabs (<code>Common Headers</code>, <code>Project Global Variables</code>, <code>Scenario Variables</code>, <code>Local Secrets</code>) in <code>Common Headers &amp; Variables</code> with persistent JSON order preservation and invariant step execution order.</li>
+      <li><b>Click-Outside Focus Release:</b> Left-clicking empty panels, margins, or labels inside the Maekom ToolWindow cleanly clears focus outlines from text fields while safely committing active table cell edits and leaving IDE editors untouched.</li>
+    </ul>
     <h3>v0.4.3</h3>
     <ul>
       <li><b>Bidirectional Scenario Variables &amp; Step Extractors Sync:</b> Displays static scenario variables alongside all step <code>Extract Rules</code> in the <code>Scenario Variables</code> tab with a <code>Source</code> column (<code>Step N · [Alias] METHOD /path</code>) and one-click <code>{{Var}}</code> copy actions, supporting safe <code>(stepIndex, extractorIndex)</code> renames (with optional bulk <code>{{var}}</code> reference update), inline value overrides, and confirmed deletions while preserving extractor rows on Bulk JSON Import.</li>

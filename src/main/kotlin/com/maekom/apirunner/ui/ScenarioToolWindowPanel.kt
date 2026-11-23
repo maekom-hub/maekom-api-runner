@@ -54,6 +54,7 @@ import com.maekom.apirunner.psi.PsiEndpointExtractor
 import com.maekom.apirunner.storage.ScenarioFileRepository
 import com.maekom.apirunner.storage.ScenarioStorageService
 import com.maekom.apirunner.update.UpdateCheckerService
+import java.awt.AWTEvent
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -63,8 +64,11 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.KeyboardFocusManager
 import java.awt.Point
+import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.event.AWTEventListener
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
@@ -72,6 +76,7 @@ import java.awt.event.MouseEvent
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
+import javax.swing.AbstractButton
 import javax.swing.BorderFactory
 import javax.swing.DefaultCellEditor
 import javax.swing.DefaultComboBoxModel
@@ -84,8 +89,11 @@ import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
+import javax.swing.JScrollBar
 import javax.swing.JSplitPane
+import javax.swing.JTabbedPane
 import javax.swing.JTable
+import javax.swing.JTree
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
@@ -95,6 +103,8 @@ import javax.swing.event.TableModelEvent
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
+import javax.swing.table.JTableHeader
+import javax.swing.text.JTextComponent
 
 // [v0.4.0] [cURL] 통합 모달(내보내기 미리보기 + 스마트 가져오기), 응답 본문 검증(No-Code Assertion) 탭,
 //          단건 실행 선행 변수 누락 감지 가드 및 추출 변수 수동 Override 기능 통합
@@ -295,12 +305,40 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         wrapStyleWord = false
     }
 
+    // [v0.4.4] 메인 패널 내 입력 필드(JTextComponent) 바깥의 빈 배경·라벨·여백 좌클릭 시 포커스 테두리 깔끔하게 해제
+    // 변경 의도: 코드 에디터나 외부 모달에 간섭하지 않고 ScenarioToolWindowPanel 하위 클릭에만 한정 동작하며,
+    //          테이블 인라인 셀 편집 중이었다면 값을 먼저 커밋(stopAllTableEdits)한 뒤 포커스를 해제하고 dispose()에서 리스너 제거
+    private val backgroundFocusClearListener = AWTEventListener { event ->
+        val mouseEvent = event as? MouseEvent ?: return@AWTEventListener
+        if (mouseEvent.id != MouseEvent.MOUSE_PRESSED) return@AWTEventListener
+        if (!SwingUtilities.isLeftMouseButton(mouseEvent) || mouseEvent.isPopupTrigger) return@AWTEventListener
+
+        val clickedComp = mouseEvent.component ?: return@AWTEventListener
+        if (!SwingUtilities.isDescendingFrom(clickedComp, this@ScenarioToolWindowPanel)) return@AWTEventListener
+
+        val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        val focusOwner = focusManager.focusOwner ?: return@AWTEventListener
+        if (!SwingUtilities.isDescendingFrom(focusOwner, this@ScenarioToolWindowPanel)) return@AWTEventListener
+        if (focusOwner !is JTextComponent && !isAnyTableEditing()) return@AWTEventListener
+
+        if (isInteractiveTarget(clickedComp)) return@AWTEventListener
+
+        if (isAnyTableEditing()) {
+            stopAllTableEdits()
+        }
+        focusManager.clearGlobalFocusOwner()
+    }
+
     init {
         buildLayout()
         wireEvents()
         installContextMenus()
         applyTranslations()
         initializeScenarios()
+
+        runCatching {
+            Toolkit.getDefaultToolkit().addAWTEventListener(backgroundFocusClearListener, AWTEvent.MOUSE_EVENT_MASK)
+        }
 
         I18nManager.getInstance().addListener(this) {
             ApplicationManager.getApplication().invokeLater {
@@ -3197,7 +3235,40 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
+    private fun isAnyTableEditing(): Boolean =
+        stepTable.isEditing ||
+            paramsTable.isEditing ||
+            headersTable.isEditing ||
+            extractRulesTable.isEditing ||
+            assertionsTable.isEditing ||
+            extractedVarsTable.isEditing
+
+    private fun isInteractiveTarget(component: Component): Boolean {
+        var current: Component? = component
+        while (current != null && current !== this) {
+            if (current is JTextComponent ||
+                current is AbstractButton ||
+                current is JComboBox<*> ||
+                current is JTable ||
+                current is JTableHeader ||
+                current is JList<*> ||
+                current is JTree ||
+                current is JTabbedPane ||
+                current is JScrollBar ||
+                current is JMenuItem ||
+                current is LanguageSegmentSwitch
+            ) {
+                return true
+            }
+            current = current.parent
+        }
+        return false
+    }
+
     override fun dispose() {
+        runCatching {
+            Toolkit.getDefaultToolkit().removeAWTEventListener(backgroundFocusClearListener)
+        }
         autoSaveAlarm.cancelAllRequests()
         scenarioRunner.stop()
     }

@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -1035,5 +1036,97 @@ class MaekomEngineTest {
         assertEquals(3, reopened.size)
         assertEquals(1, reopened.count { it.key == "authToken" })
         assertEquals("override-tok-99", reopened.first { it.key == "authToken" }.value)
+    }
+
+    // [v0.4.4] 테이블 행 순서 변경(▲/▼ 단일·연속·비연속 다중 선택, 드래그 앤 드롭 경계/No-Op) 및
+    //          시나리오 변수 LinkedHashMap 순서 보존·스텝 추출기 실행 순서 불변성 단위 테스트
+    @Test
+    fun `table row reorder algorithms and scenario variable order persistence keep step execution intact`() {
+        // 1. ▲/▼ step move: single, contiguous multi, non-contiguous multi, and boundary no-ops
+        val singleUp = GlobalConfigDialog.computeMoveStepOrder(4, intArrayOf(2), delta = -1)
+        assertNotNull(singleUp)
+        assertEquals(listOf(0, 2, 1, 3), singleUp!!.first)
+        assertEquals(listOf(1), singleUp.second.toList())
+
+        val singleDown = GlobalConfigDialog.computeMoveStepOrder(4, intArrayOf(1), delta = 1)
+        assertNotNull(singleDown)
+        assertEquals(listOf(0, 2, 1, 3), singleDown!!.first)
+        assertEquals(listOf(2), singleDown.second.toList())
+
+        val contiguousUp = GlobalConfigDialog.computeMoveStepOrder(5, intArrayOf(2, 3), delta = -1)
+        assertNotNull(contiguousUp)
+        assertEquals(listOf(0, 2, 3, 1, 4), contiguousUp!!.first)
+        assertEquals(listOf(1, 2), contiguousUp.second.toList())
+
+        val nonContiguousDown = GlobalConfigDialog.computeMoveStepOrder(5, intArrayOf(0, 2), delta = 1)
+        assertNotNull(nonContiguousDown)
+        assertEquals(listOf(1, 0, 3, 2, 4), nonContiguousDown!!.first)
+        assertEquals(listOf(1, 3), nonContiguousDown.second.toList())
+
+        // Boundary no-ops
+        assertNull(GlobalConfigDialog.computeMoveStepOrder(4, intArrayOf(0, 2), delta = -1))
+        assertNull(GlobalConfigDialog.computeMoveStepOrder(4, intArrayOf(1, 3), delta = 1))
+        assertNull(GlobalConfigDialog.computeMoveStepOrder(4, intArrayOf(), delta = 1))
+
+        // 2. Drag & Drop INSERT_ROWS reorder: drag down, drag up, multi-row drag, and no-op drop
+        val dropDown = GlobalConfigDialog.computeDropReorder(4, intArrayOf(0), dropRow = 3)
+        assertNotNull(dropDown)
+        assertEquals(listOf(1, 2, 0, 3), dropDown!!.first)
+        assertEquals(listOf(2), dropDown.second.toList())
+
+        val dropUp = GlobalConfigDialog.computeDropReorder(4, intArrayOf(3), dropRow = 1)
+        assertNotNull(dropUp)
+        assertEquals(listOf(0, 3, 1, 2), dropUp!!.first)
+        assertEquals(listOf(1), dropUp.second.toList())
+
+        val dropMulti = GlobalConfigDialog.computeDropReorder(5, intArrayOf(1, 3), dropRow = 5)
+        assertNotNull(dropMulti)
+        assertEquals(listOf(0, 2, 4, 1, 3), dropMulti!!.first)
+        assertEquals(listOf(3, 4), dropMulti.second.toList())
+
+        // Dropping row 1 at row 1 or row 2 produces identical order -> null (no-op)
+        assertNull(GlobalConfigDialog.computeDropReorder(4, intArrayOf(1), dropRow = 1))
+        assertNull(GlobalConfigDialog.computeDropReorder(4, intArrayOf(1), dropRow = 2))
+
+        // 3. Pure static variable reordering in ScenarioVariableSyncEngine marks scenarioModified=true & preserves LinkedHashMap order
+        //    while reordering extractor rows never mutates step execution order
+        val scenario = ApiScenario(
+            name = "order-test",
+            globalVariables = linkedMapOf("firstKey" to "1", "secondKey" to "2"),
+            steps = mutableListOf(
+                ApiStep(
+                    name = "StepA",
+                    method = "GET",
+                    url = "/step-a",
+                    extractRules = mutableListOf(ExtractRule("tokA", "$.a", true))
+                ),
+                ApiStep(
+                    name = "StepB",
+                    method = "GET",
+                    url = "/step-b",
+                    extractRules = mutableListOf(ExtractRule("tokB", "$.b", true))
+                )
+            )
+        )
+        val runtimeContext = linkedMapOf<String, String>()
+        val unified = ScenarioVariableSyncEngine.buildUnifiedRows(scenario, runtimeContext, "시나리오 변수")
+        // Original order: [firstKey, secondKey, tokA(step 0), tokB(step 1)]
+        // Reverse static vars AND move tokB above tokA in table display
+        val reordered = listOf(unified[1], unified[0], unified[3], unified[2])
+        val syncResult = ScenarioVariableSyncEngine.applySync(
+            scenario = scenario,
+            runtimeContext = runtimeContext,
+            editedRows = reordered,
+            deletedExtractorRefs = emptySet(),
+            replaceReferencesForRenames = false
+        )
+
+        assertTrue(syncResult.scenarioModified)
+        assertEquals(listOf("secondKey", "firstKey"), scenario.globalVariables.keys.toList())
+        // Step execution order and each step's own extractor stay 100% intact
+        assertEquals("StepA", scenario.steps[0].name)
+        assertEquals("tokA", scenario.steps[0].extractRules[0].varName)
+        assertEquals("StepB", scenario.steps[1].name)
+        assertEquals("tokB", scenario.steps[1].extractRules[0].varName)
     }
 }

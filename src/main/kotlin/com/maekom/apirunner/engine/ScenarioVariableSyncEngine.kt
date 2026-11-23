@@ -297,8 +297,8 @@ object ScenarioVariableSyncEngine {
             }
         }
 
-        // 4) Update scenario.globalVariables if changed
-        if (newGlobalVariables != oldGlobalVariables) {
+        // 4) Update scenario.globalVariables if changed (compare ordered entries so LinkedHashMap reordering is persisted)
+        if (newGlobalVariables.entries.toList() != oldGlobalVariables.entries.toList()) {
             scenario.globalVariables = newGlobalVariables
             scenarioModified = true
         }

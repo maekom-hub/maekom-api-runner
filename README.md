@@ -39,10 +39,10 @@
 2. **요청 추가:** Spring 컨트롤러 메서드 옆 **🌶️ 고추 아이콘**을 클릭해 단건 실행하거나 현재 시나리오에 스텝을 추가합니다.
 3. **체이닝 & 관리:** 응답 JSON에서 필드를 추출(`{{변수명}}`)해 다음 스텝에 연결하고, **`[시나리오 관리]`** 팝업에서 폴더별로 시나리오를 정리하세요.
 
-### 🆕 `v0.4.3` 최신 업데이트
+### 🆕 `v0.4.4` 최신 업데이트
 
-- **`시나리오 변수` ↔ 스텝 `응답 변수 추출` 양방향 현행화:** `[공통 헤더·변수 관리]`의 `시나리오 변수` 탭에 현재 시나리오의 정적 변수와 스텝별 추출 변수를 **`출처 (Source)`** 컬럼(`시나리오 변수` / `Step N · [별칭] METHOD /path`) 및 **`[변수명 복사]`**(`{{Key}}` 클립보드 복사) 기능과 함께 통합 표시
-- **고유 참조 바인딩 & 안전한 일괄 동기화:** `(stepIndex, extractorIndex)` 바인딩으로 정확한 대상 스텝의 추출 규칙을 수정·삭제(확인 안내 포함)하고, 변수명 변경 시 시나리오 내 참조 중인 `{{구변수명}}` 일괄 치환 및 `Value` 인라인 Override 즉시 연동 지원(`JSON 일괄 입력` 시 추출 변수 행 보존)
+- **공통 헤더·변수 테이블 행 순서 변경(드래그 앤 드롭 + `▲` / `▼`):** `[공통 헤더·변수 관리]` 내 편집 가능한 4개 탭(`공통 헤더`, `프로젝트 전역 변수`, `시나리오 변수`, `로컬 시크릿`)에 `DropMode.INSERT_ROWS` 마우스 드래그 앤 드롭과 `▲` / `▼` 순서 이동 버튼(단일·다중 선택 및 경계 자동 비활성화)을 추가하고, 저장 시 변경된 순서가 JSON 파일에 영속 보존되도록 개선 (`시나리오 변수` 탭에서 스텝 추출 변수의 표시 순서를 바꿔도 실제 스텝 실행 순서는 불변)
+- **메인 UI 빈 배경 클릭 시 입력 포커스 자동 해제:** 메인 ToolWindow 내부의 `Path`, `스텝 별칭`, `기대 상태`, `대기(ms)` 등 입력 필드 편집 후 빈 패널·라벨·여백을 좌클릭하면 포커스 테두리가 즉시 해제되며, 테이블 셀 편집 중일 때는 입력값을 안전하게 커밋한 뒤 포커스를 해제(IDE 코드 에디터 및 외부 팝업 간섭 없음)
 
 ---
 
@@ -52,7 +52,7 @@
 
 - **Multi-Step API Chaining & Auto-Sampling:** One-click chili (🌶️) gutter markers on Spring controllers auto-sample `@RequestParam`/`@ModelAttribute`/`@RequestBody` DTOs & records, chain steps with one-click `JsonPath` extraction, and enforce Fail-Fast execution.
 - **Persistent Environment Profiles & Ignore SSL:** Switch `Local` (auto-detected `server.port`) and `DEV`/`STG`/`PRD` profiles (`.maekom/environments.json`) across scenarios with self-signed `Ignore SSL` support.
-- **Layered Variables & Common Headers:** Manage 8 live dynamic variables (`{{$kstNow}}`, `{{$uuid}}`, etc.), extracted variables, project Global Variables (`.maekom/global-variables.json`), Scenario Variables, and Local Secrets (`.maekom/secrets.local.json`) with **Bulk JSON Import** and duplicate validation.
+- **Layered Variables & Common Headers:** Manage 8 live dynamic variables (`{{$kstNow}}`, `{{$uuid}}`, etc.), extracted variables, project Global Variables (`.maekom/global-variables.json`), Scenario Variables, and Local Secrets (`.maekom/secrets.local.json`) with **Bulk JSON Import**, row reordering (Drag & Drop + `▲`/`▼`), and duplicate validation.
 - **Folder-Based Scenario Tree Manager:** Organize scenarios in nested folders under `.maekom/scenarios/` (100% compatible with legacy root JSON files) with **Drag & Drop** moves/reordering (both folders & scenarios), `Base Info` (`Name`/`Description`) editing, Import/Export, and 30s Smart Auto-Save.
 - **One-Click cURL & Instant KO/EN Switch:** Copy single-step or full-scenario `curl` scripts, toggle **`[한국어 | English]`** live on IntelliJ's native ToolWindow title bar, and jump directly to `Settings > Plugins` via **`[Check Updates]`**.
 
@@ -62,10 +62,10 @@
 2. **Capture Endpoints:** Click the **🌶️ chili icon** next to any Spring controller method to run immediately or append to your scenario.
 3. **Chain & Organize:** Extract JSON response values into `{{variables}}` for subsequent steps and organize scenarios into folders via **`[Scenarios]`**.
 
-### 🆕 What's New in `v0.4.3`
+### 🆕 What's New in `v0.4.4`
 
-- **Bidirectional Sync for Scenario Variables & Step Extractors:** Displays both static scenario variables and step `Extract Rules` in the `Scenario Variables` tab with a read-only `Source` column (`Scenario Variable` / `Step N · [Alias] METHOD /path`) and one-click **`Copy {{Var}}`** clipboard actions.
-- **Safe Rename, Override & Delete Propagation:** Uses `(stepIndex, extractorIndex)` bindings to sync renames (with optional bulk `{{oldVar}} → {{newVar}}` replacement across steps), inline `Value` overrides (to both active session & default value), and confirmed rule deletions while preserving extractor rows during Bulk JSON Import.
+- **Table Row Reordering (Drag & Drop + `▲` / `▼`):** Added `DropMode.INSERT_ROWS` mouse drag-and-drop and `▲` / `▼` buttons (with multi-row selection preservation and boundary disable states) across all 4 editable tabs (`Common Headers`, `Project Global Variables`, `Scenario Variables`, `Local Secrets`) in `Common Headers & Variables`, persisting the updated order to disk without affecting step execution order.
+- **Click-Outside Focus Release in Main UI:** Left-clicking empty background panels, margins, or labels inside the Maekom ToolWindow cleanly clears focus outlines from text fields (`Path`, `Step Alias`, `Expected`, `Delay(ms)`, etc.) while safely committing active table cell edits and leaving IDE editors untouched.
 
 ---
 
@@ -76,6 +76,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.4.4` | 2026-11-23 | `[공통 헤더·변수 관리]` 편집 가능 4개 탭 행 순서 변경(드래그 앤 드롭 + `▲`/`▼` 버튼, 순서 영속 저장) 및 메인 UI 빈 배경 클릭 시 입력 포커스 자동 해제 UX 개선 / Table row reordering (Drag & Drop + `▲`/`▼`, persisted order) across 4 editable tabs in `Common Headers & Variables` & click-outside focus release in main ToolWindow | [maekom-api-runner-0.4.4.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.4/maekom-api-runner-0.4.4.zip) |
 | `v0.4.3` | 2026-11-23 | `시나리오 변수` 탭에 스텝별 `응답 변수 추출` 통합 표시(`출처` 컬럼) 및 변수명 변경(참조 일괄 치환)·값 Override·삭제 양방향 현행화 / Unified `Scenario Variables` & step `Extract Rules` view with `Source` column and bidirectional rename/override/delete sync | [maekom-api-runner-0.4.3.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.3/maekom-api-runner-0.4.3.zip) |
 | `v0.4.2` | 2026-11-23 | 상단 툴바 버튼·창 타이틀 **`공통 헤더·변수 관리`** 통일 및 5개 탭 명칭 간소화·순서 재배치(`공통 헤더 → 프로젝트 전역 변수 → 시나리오 변수 → 로컬 시크릿 → 내장 동적 변수·헤더`) / Standardize **`Common Headers & Variables`** label and reorder simplified 5 tabs | [maekom-api-runner-0.4.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.2/maekom-api-runner-0.4.2.zip) |
 | `v0.4.1` | 2026-11-23 | `[변수·헤더 관리]` 5탭 통합 다이얼로그(전역 변수 인라인 편집·적용 범위 배지), `cURL` 빈 값 헤더·파라미터 기본 제외 및 옵션화, 폴더 단위 일괄 회귀 실행(`Run Folder`) & 결과 리포트 / Unified 5-tab Vars & Headers dialog (inline Global Vars editing), clean cURL blank-value omission & Folder Regression Batch Run with report | [maekom-api-runner-0.4.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.1/maekom-api-runner-0.4.1.zip) |

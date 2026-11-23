@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.4.3] 시나리오 변수 탭 ↔ 스텝 응답 변수 추출 양방향 현행화(출처 컬럼·삭제 확인·참조 일괄 치환) KO/EN 문구 추가
-// 변경 의도: 시나리오 정적 변수와 스텝별 추출 변수의 출처 표시, 추출 규칙 삭제 확인 및 변수명 변경 시 참조 치환 안내 동기화
+// [v0.4.4] 공통 헤더·변수 관리 4개 편집 탭 행 순서 이동(▲/▼ 툴팁) KO/EN 문구 추가
+// 변경 의도: 행 순서 위/아래 이동 버튼에 명확한 한국어/영어 툴팁을 제공해 다국어 일관성 유지
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -674,7 +674,9 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.scenarioVars.renameRefYes" to "예 (참조 함께 변경)",
             "global.scenarioVars.renameRefNo" to "아니오 (변수명만 변경)",
             "global.scenarioVars.copyBtn" to "📋 변수명 복사",
-            "global.scenarioVars.copyMenu" to "📋 {{변수명}} 복사"
+            "global.scenarioVars.copyMenu" to "📋 {{변수명}} 복사",
+            "global.reorder.upTooltip" to "선택한 행을 위로 이동 (드래그 앤 드롭 지원)",
+            "global.reorder.downTooltip" to "선택한 행을 아래로 이동 (드래그 앤 드롭 지원)"
         )
 
         private val EN_MESSAGES: Map<String, String> = mapOf(
@@ -1239,7 +1241,9 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.scenarioVars.renameRefYes" to "Yes (Update References)",
             "global.scenarioVars.renameRefNo" to "No (Rename Only)",
             "global.scenarioVars.copyBtn" to "📋 Copy {{Var}}",
-            "global.scenarioVars.copyMenu" to "📋 Copy {{Variable}}"
+            "global.scenarioVars.copyMenu" to "📋 Copy {{Variable}}",
+            "global.reorder.upTooltip" to "Move selected row(s) up (also supports Drag & Drop)",
+            "global.reorder.downTooltip" to "Move selected row(s) down (also supports Drag & Drop)"
         )
     }
 }

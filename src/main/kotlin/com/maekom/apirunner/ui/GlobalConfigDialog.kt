@@ -29,13 +29,17 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
+import java.awt.datatransfer.Transferable
+import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
 import javax.swing.ButtonGroup
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
+import javax.swing.DropMode
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
@@ -45,13 +49,13 @@ import javax.swing.JPopupMenu
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
+import javax.swing.TransferHandler
 import javax.swing.event.TableModelEvent
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.4.3] 시나리오 변수 탭에 스텝별 응답 변수 추출 항목 통합 표시('출처' 컬럼 추가, (stepIndex, extractorIndex) 고유 참조 바인딩)
-//          및 변수명 변경(참조 일괄 치환 확인)·값 Override·삭제 양방향 현행화 지원
-// 변경 의도: 기존 .maekom/scenarios/**/*.json 스키마를 유지하면서 현재 시나리오의 모든 정적·추출 변수를 한 탭에서 안전하게 통합 관리
+// [v0.4.4] 공통 헤더·프로젝트 전역 변수·시나리오 변수·로컬 시크릿 4개 편집 탭 행 순서 이동(▲/▼ 버튼 + DropMode.INSERT_ROWS 드래그 앤 드롭) 구현
+// 변경 의도: 다중 선택 안전 이동, 편집 중 셀 자동 커밋, 시나리오 변수 추출 규칙 참조(stepIndex, extractorIndex) 불변 유지 및 순서 영속 저장 보장
 
 enum class HeaderImportMode {
     MERGE,
@@ -107,6 +111,52 @@ class GlobalConfigDialog(
                 }
             }
             return result
+        }
+
+        // [v0.4.4] 다중 선택(연속/비연속) 행의 안전한 한 칸 위/아래 이동 순열 계산 유틸 (단위 테스트 가능)
+        fun computeMoveStepOrder(totalSize: Int, selectedIndices: IntArray, delta: Int): Pair<List<Int>, IntArray>? {
+            if (totalSize <= 1 || selectedIndices.isEmpty() || (delta != -1 && delta != 1)) return null
+            val valid = selectedIndices.filter { it in 0 until totalSize }.distinct().sorted()
+            if (valid.isEmpty()) return null
+            if (delta == -1 && valid.first() <= 0) return null
+            if (delta == 1 && valid.last() >= totalSize - 1) return null
+
+            val order = (0 until totalSize).toMutableList()
+            if (delta == -1) {
+                for (idx in valid) {
+                    val tmp = order[idx - 1]
+                    order[idx - 1] = order[idx]
+                    order[idx] = tmp
+                }
+                return order to valid.map { it - 1 }.toIntArray()
+            } else {
+                for (idx in valid.reversed()) {
+                    val tmp = order[idx + 1]
+                    order[idx + 1] = order[idx]
+                    order[idx] = tmp
+                }
+                return order to valid.map { it + 1 }.toIntArray()
+            }
+        }
+
+        // [v0.4.4] 마우스 드래그 앤 드롭(DropMode.INSERT_ROWS) 삽입 위치 기반 행 재배치 순열 계산 유틸
+        fun computeDropReorder(totalSize: Int, draggedIndices: IntArray, dropRow: Int): Pair<List<Int>, IntArray>? {
+            if (totalSize <= 1 || draggedIndices.isEmpty()) return null
+            val moved = draggedIndices.filter { it in 0 until totalSize }.distinct().sorted()
+            if (moved.isEmpty()) return null
+            val movedSet = moved.toSet()
+            val clampedDrop = dropRow.coerceIn(0, totalSize)
+            val remaining = (0 until totalSize).filter { it !in movedSet }
+            val adjustedInsert = (clampedDrop - moved.count { it < clampedDrop }).coerceIn(0, remaining.size)
+
+            val newOrder = ArrayList<Int>(totalSize)
+            newOrder.addAll(remaining.subList(0, adjustedInsert))
+            newOrder.addAll(moved)
+            newOrder.addAll(remaining.subList(adjustedInsert, remaining.size))
+
+            if (newOrder == (0 until totalSize).toList()) return null
+            val newSelection = (adjustedInsert until adjustedInsert + moved.size).toList().toIntArray()
+            return newOrder to newSelection
         }
     }
 
@@ -336,6 +386,10 @@ class GlobalConfigDialog(
         }
         btnBar.add(addBtn)
         btnBar.add(removeBtn)
+        installRowReorderSupport(headersTable, btnBar) { newOrder, newSelection ->
+            reorderDefaultTableModel(commonHeadersModel, newOrder)
+            restoreTableSelection(headersTable, newSelection)
+        }
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
@@ -550,6 +604,19 @@ class GlobalConfigDialog(
         btnBar.add(addBtn)
         btnBar.add(removeBtn)
         btnBar.add(copyVarBtn)
+        // [v0.4.4] 시나리오 변수 테이블 행 순서 변경 시 scenarioVarRows((stepIndex, extractorIndex) 포함)를 함께 재배치하여 스텝 실행 순서 및 양방향 동기화 무결성 보존
+        installRowReorderSupport(variablesTable, btnBar) { newOrder, newSelection ->
+            isUpdatingScenarioVarsTable = true
+            try {
+                val reorderedRows = newOrder.map { scenarioVarRows[it] }
+                scenarioVarRows.clear()
+                scenarioVarRows.addAll(reorderedRows)
+                reorderDefaultTableModel(scenarioVarsModel, newOrder)
+            } finally {
+                isUpdatingScenarioVarsTable = false
+            }
+            restoreTableSelection(variablesTable, newSelection)
+        }
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
@@ -794,6 +861,19 @@ class GlobalConfigDialog(
         }
         btnBar.add(addBtn)
         btnBar.add(removeBtn)
+        // [v0.4.4] 프로젝트 전역 변수 순서 변경 시 previousGlobalKeys 중복 검증 추적 리스트도 동일 순서로 동기화
+        installRowReorderSupport(projectGlobalsTable, btnBar) { newOrder, newSelection ->
+            isUpdatingGlobalsTable = true
+            try {
+                val reorderedKeys = newOrder.map { idx -> previousGlobalKeys.getOrElse(idx) { "" } }
+                previousGlobalKeys.clear()
+                previousGlobalKeys.addAll(reorderedKeys)
+                reorderDefaultTableModel(projectGlobalsModel, newOrder)
+            } finally {
+                isUpdatingGlobalsTable = false
+            }
+            restoreTableSelection(projectGlobalsTable, newSelection)
+        }
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
@@ -1012,11 +1092,12 @@ class GlobalConfigDialog(
         return getProjectGlobalVariables() != normalizedInitial
     }
 
+    // [v0.4.4] LinkedHashMap 순수 순서 변경(키/값 동일)도 변경으로 감지하여 .maekom/secrets.local.json에 순서 영속 저장
     fun isSecretsChanged(): Boolean {
         val normalizedInitial = LinkedHashMap<String, String>().apply {
             initialSecrets.forEach { (k, v) -> if (k.trim().isNotEmpty()) put(k.trim(), v) }
         }
-        return getSecrets() != normalizedInitial
+        return getSecrets().entries.toList() != normalizedInitial.entries.toList()
     }
 
     private fun buildKeyValueTableTab(
@@ -1064,6 +1145,10 @@ class GlobalConfigDialog(
         }
         btnBar.add(addBtn)
         btnBar.add(removeBtn)
+        installRowReorderSupport(table, btnBar) { newOrder, newSelection ->
+            reorderDefaultTableModel(model, newOrder)
+            restoreTableSelection(table, newSelection)
+        }
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
@@ -1118,6 +1203,134 @@ class GlobalConfigDialog(
     private fun stopEditing(table: JBTable) {
         if (table.isEditing) {
             table.cellEditor?.stopCellEditing()
+        }
+    }
+
+    // [v0.4.4] 편집 가능한 4개 테이블에 ▲/▼ 버튼(활성 상태 자동 동기화) + DropMode.INSERT_ROWS 드래그 앤 드롭 공통 설치
+    private fun installRowReorderSupport(
+        table: JBTable,
+        btnBar: JPanel,
+        applyPermutation: (newOrder: List<Int>, newSelection: IntArray) -> Unit
+    ) {
+        val moveUpBtn = JButton("▲").apply {
+            margin = JBUI.insets(2, 6)
+            toolTipText = I18nManager.t("global.reorder.upTooltip")
+            isEnabled = false
+        }
+        val moveDownBtn = JButton("▼").apply {
+            margin = JBUI.insets(2, 6)
+            toolTipText = I18nManager.t("global.reorder.downTooltip")
+            isEnabled = false
+        }
+
+        val syncButtons = {
+            val selected = table.selectedRows
+            val count = table.rowCount
+            moveUpBtn.isEnabled = selected.isNotEmpty() && selected.min() > 0
+            moveDownBtn.isEnabled = selected.isNotEmpty() && selected.max() < count - 1
+        }
+
+        moveUpBtn.addActionListener {
+            stopEditing(table)
+            val result = computeMoveStepOrder(table.rowCount, table.selectedRows, delta = -1) ?: return@addActionListener
+            applyPermutation(result.first, result.second)
+            syncButtons()
+        }
+        moveDownBtn.addActionListener {
+            stopEditing(table)
+            val result = computeMoveStepOrder(table.rowCount, table.selectedRows, delta = 1) ?: return@addActionListener
+            applyPermutation(result.first, result.second)
+            syncButtons()
+        }
+
+        table.selectionModel.addListSelectionListener { syncButtons() }
+        table.model.addTableModelListener { syncButtons() }
+
+        table.dragEnabled = true
+        table.dropMode = DropMode.INSERT_ROWS
+        table.transferHandler = RowReorderTransferHandler(table) { newOrder, newSelection ->
+            applyPermutation(newOrder, newSelection)
+            syncButtons()
+        }
+
+        btnBar.add(moveUpBtn)
+        btnBar.add(moveDownBtn)
+    }
+
+    private fun reorderDefaultTableModel(model: DefaultTableModel, newOrder: List<Int>) {
+        val colCount = model.columnCount
+        val snapshot = newOrder.map { rowIdx ->
+            Array<Any?>(colCount) { colIdx -> model.getValueAt(rowIdx, colIdx) }
+        }
+        model.rowCount = 0
+        for (rowData in snapshot) {
+            model.addRow(rowData)
+        }
+    }
+
+    private fun restoreTableSelection(table: JBTable, newSelection: IntArray) {
+        table.clearSelection()
+        val sorted = newSelection.filter { it in 0 until table.rowCount }.sorted()
+        for (idx in sorted) {
+            table.addRowSelectionInterval(idx, idx)
+        }
+        sorted.firstOrNull()?.let { first ->
+            table.scrollRectToVisible(table.getCellRect(first, 0, true))
+        }
+    }
+
+    private data class RowDragPayload(
+        val sourceTable: JTable,
+        val rows: IntArray
+    )
+
+    private inner class RowReorderTransferHandler(
+        private val table: JBTable,
+        private val onReorder: (newOrder: List<Int>, newSelection: IntArray) -> Unit
+    ) : TransferHandler() {
+        private val rowFlavor = DataFlavor(RowDragPayload::class.java, "MaekomTableRowReorder")
+
+        override fun getSourceActions(c: JComponent?): Int = MOVE
+
+        override fun createTransferable(c: JComponent?): Transferable? {
+            if (table.isEditing) {
+                table.cellEditor?.stopCellEditing()
+            }
+            val selected = table.selectedRows
+            if (selected.isEmpty()) return null
+            val payload = RowDragPayload(table, selected.copyOf())
+            return object : Transferable {
+                override fun getTransferDataFlavors(): Array<DataFlavor> = arrayOf(rowFlavor)
+                override fun isDataFlavorSupported(flavor: DataFlavor?): Boolean = flavor == rowFlavor
+                override fun getTransferData(flavor: DataFlavor?): Any {
+                    if (flavor != rowFlavor) throw UnsupportedFlavorException(flavor)
+                    return payload
+                }
+            }
+        }
+
+        override fun canImport(support: TransferSupport): Boolean {
+            if (!support.isDrop || !support.isDataFlavorSupported(rowFlavor)) return false
+            val dl = support.dropLocation as? JTable.DropLocation ?: return false
+            if (!dl.isInsertRow) return false
+            val payload = runCatching { support.transferable.getTransferData(rowFlavor) as? RowDragPayload }.getOrNull()
+                ?: return false
+            if (payload.sourceTable !== table) return false
+            support.setShowDropLocation(true)
+            return true
+        }
+
+        override fun importData(support: TransferSupport): Boolean {
+            if (!canImport(support)) return false
+            if (table.isEditing) {
+                table.cellEditor?.stopCellEditing()
+            }
+            val dl = support.dropLocation as? JTable.DropLocation ?: return false
+            val payload = runCatching { support.transferable.getTransferData(rowFlavor) as? RowDragPayload }.getOrNull()
+                ?: return false
+            val result = computeDropReorder(table.rowCount, payload.rows, dl.row) ?: return false
+            onReorder(result.first, result.second)
+            return true
         }
     }
 
