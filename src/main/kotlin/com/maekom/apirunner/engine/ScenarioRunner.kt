@@ -42,13 +42,14 @@ class ScenarioRunner(
 
     fun isCancelled(): Boolean = cancelled.get()
 
-    // [v0.1.3] 프로젝트 공용 전역 변수(projectGlobalVariables) 병합 및 활성 공통 헤더(effectiveEnabledHeadersMap) 반영
+    // [v0.4.0] 선행 스텝부터 지정 인덱스(maxStepIndex)까지만 순차 실행하는 옵션 추가 및 No-Code 응답 검증(AssertionEvaluator) 통합
     fun runScenario(
         scenario: ApiScenario,
         secrets: Map<String, String> = emptyMap(),
         initialContext: Map<String, String> = emptyMap(),
         projectGlobalVariables: Map<String, String> = emptyMap(),
-        listener: ScenarioRunListener? = null
+        listener: ScenarioRunListener? = null,
+        maxStepIndex: Int = scenario.steps.lastIndex
     ): ScenarioExecutionSummary {
         cancelled.set(false)
         val startNanos = System.nanoTime()
@@ -57,8 +58,10 @@ class ScenarioRunner(
         val results = mutableListOf<StepExecutionResult>()
         var aborted = false
         var abortReason: String? = null
+        val targetEndIndex = maxStepIndex.coerceAtMost(scenario.steps.lastIndex)
 
         for ((index, step) in scenario.steps.withIndex()) {
+            if (index > targetEndIndex) break
             if (aborted) {
                 val skipped = StepExecutionResult(
                     stepId = step.id,
@@ -274,6 +277,28 @@ class ScenarioRunner(
             )
         }
 
+        // 2.5. No-Code Response Body Assertions (JSONPath) -> Fail-Fast if any enabled rule fails
+        val assertionResults = AssertionEvaluator.evaluateAll(
+            rawBody = response.rawBody,
+            rules = step.assertions,
+            runtimeContext = runtimeContext,
+            secrets = secrets,
+            globalVariables = effectiveGlobals
+        )
+        val failedAssertions = assertionResults.filter { !it.passed }
+        if (failedAssertions.isNotEmpty()) {
+            val reasonSummary = failedAssertions.joinToString(" | ") { it.message }
+            return StepExecutionResult(
+                stepId = step.id,
+                stepIndex = stepIndex,
+                status = StepStatus.FAILED,
+                requestSnapshot = snapshot,
+                response = response,
+                assertionResults = assertionResults,
+                failureReason = "응답 본문 검증 실패 (${failedAssertions.size}/${assertionResults.size}): $reasonSummary"
+            )
+        }
+
         // 3. JsonPath variable extraction -> Fail-Fast if required == true
         val extracted = linkedMapOf<String, String>()
         val warnings = mutableListOf<String>()
@@ -299,6 +324,7 @@ class ScenarioRunner(
                         response = response,
                         extractedVariables = extracted,
                         extractionWarnings = warnings,
+                        assertionResults = assertionResults,
                         failureReason = "필수 응답 변수 추출 실패 (var='$varName', jsonPath='$jsonPath'): $reason"
                     )
                 } else {
@@ -314,7 +340,8 @@ class ScenarioRunner(
             requestSnapshot = snapshot,
             response = response,
             extractedVariables = extracted,
-            extractionWarnings = warnings
+            extractionWarnings = warnings,
+            assertionResults = assertionResults
         )
     }
 

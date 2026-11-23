@@ -15,8 +15,6 @@ import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.ui.popup.PopupStep
-import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.awt.RelativePoint
@@ -30,15 +28,18 @@ import com.intellij.ui.table.JBTable
 import com.intellij.util.Alarm
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.WrapLayout
-import com.maekom.apirunner.engine.CurlExporter
 import com.maekom.apirunner.engine.JsonPathLocator
+import com.maekom.apirunner.engine.ParsedCurlResult
 import com.maekom.apirunner.engine.ScenarioRunListener
 import com.maekom.apirunner.engine.ScenarioRunner
 import com.maekom.apirunner.engine.VariableNameValidator
+import com.maekom.apirunner.engine.VariableResolver
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
+import com.maekom.apirunner.model.AssertionOperator
+import com.maekom.apirunner.model.AssertionRule
 import com.maekom.apirunner.model.EnvironmentConfig
 import com.maekom.apirunner.model.ExtractRule
 import com.maekom.apirunner.model.ExtractedEndpoint
@@ -71,10 +72,12 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.BorderFactory
+import javax.swing.DefaultCellEditor
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JMenuItem
@@ -92,9 +95,9 @@ import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.3.0] 폴더 상대 경로(currentScenarioPath) 추적, '폴더명 / 시나리오명' ComboBox 표시,
-//          ScenarioExplorerDialog 연동 및 네이티브 타이틀 바 업데이트 확인 버튼 ModalityState.any() 대응
-// 변경 의도: 기존 루트 시나리오와의 100% 하위 호환성을 유지하면서 폴더 트리 관리·저장 경로 보존·Settings > Plugins 즉시 오픈을 보장
+// [v0.4.0] [cURL] 통합 모달(내보내기 미리보기 + 스마트 가져오기), 응답 본문 검증(No-Code Assertion) 탭,
+//          단건 실행 선행 변수 누락 감지 가드 및 추출 변수 수동 Override 기능 통합
+// 변경 의도: 기존 .maekom/scenarios/**/*.json 100% 하위 호환을 유지하면서 실무 API 테스트·디버깅 생산성을 극대화
 class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     companion object {
@@ -102,6 +105,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         private const val TAB_BODY = 1
         private const val TAB_HEADERS = 2
         private const val TAB_EXTRACT = 3
+        private const val TAB_ASSERTIONS = 4
         private const val RESULT_TAB_RESPONSE = 0
         private const val RESULT_TAB_EXTRACTED = 1
         private const val RESULT_TAB_LOG = 2
@@ -242,6 +246,19 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val extractGuideBtn = JButton()
     private val extractHintLabel = JBLabel()
 
+    // [v0.4.0] Assertions Tab: [활성(✓)] | [JsonPath] | [연산자] | [기대값(Expected)]
+    private val assertionsTableModel = object : DefaultTableModel(arrayOf<Any>("활성", "JsonPath", "연산자", "기대값 (Expected)"), 0) {
+        override fun getColumnClass(columnIndex: Int): Class<*> =
+            if (columnIndex == 0) java.lang.Boolean::class.java else String::class.java
+
+        override fun isCellEditable(row: Int, column: Int): Boolean = true
+    }
+    private val assertionsTable = JBTable(assertionsTableModel)
+    private val addAssertionBtn = JButton()
+    private val addAssertionFromResponseBtn = JButton()
+    private val removeAssertionBtn = JButton()
+    private val assertionHintLabel = JBLabel()
+
     // --- Right Pane: Result Viewer ---
     private val resultStatusTitleLabel = JBLabel()
     private val statusBadgeLabel = JBLabel()
@@ -250,14 +267,17 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val scenarioStatusLabel = JBLabel("")
     private val resultTabs = JBTabbedPane()
     private val extractedHeaderLabel = JBLabel()
+    private val extractedOverrideHintLabel = JBLabel()
+    private val addOverrideVarBtn = JButton()
+    private val removeOverrideVarBtn = JButton()
     private val responseHeaderLabel = JBLabel()
     private val extractFromResponseBtn = JButton()
     private val clearLogBtn = JButton()
     private val executionLogBuffer = StringBuilder()
 
-    // [v0.1.5] 추출 변수 전용 탭 테이블(변수명 | 추출된 값 | 복사 버튼) 3컬럼 구성
+    // [v0.4.0] 추출 변수 전용 탭 테이블: Value(컬럼 1) 더블클릭 편집으로 메모리 세션 수동 Override 지원
     private val extractedVarsModel = object : DefaultTableModel(arrayOf<Any>("추출 변수명", "추출된 값", "복사"), 0) {
-        override fun isCellEditable(row: Int, column: Int): Boolean = false
+        override fun isCellEditable(row: Int, column: Int): Boolean = (column == 1)
     }
     private val extractedVarsTable = JBTable(extractedVarsModel)
 
@@ -806,10 +826,41 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         extractBtnBar.add(extractHintLabel)
         extractPanel.add(extractBtnBar, BorderLayout.SOUTH)
 
+        // [v0.4.0] Tab 4: 응답 검증 (No-Code JSONPath Assertions)
+        assertionsTable.apply {
+            rowHeight = 24
+            putClientProperty("terminateEditOnFocusLost", true)
+            tableHeader.reorderingAllowed = false
+            columnModel.getColumn(0).apply {
+                maxWidth = 54
+                minWidth = 42
+                preferredWidth = 48
+            }
+            columnModel.getColumn(1).preferredWidth = 180
+            columnModel.getColumn(2).apply {
+                minWidth = 96
+                preferredWidth = 110
+                maxWidth = 140
+                cellEditor = DefaultCellEditor(JComboBox(AssertionOperator.ALL_SYMBOLS))
+            }
+            columnModel.getColumn(3).preferredWidth = 180
+        }
+        val assertionsPanel = JPanel(BorderLayout(0, 4))
+        assertionsPanel.add(JBScrollPane(assertionsTable), BorderLayout.CENTER)
+        val assertionBtnBar = createWrapBar()
+        addAssertionFromResponseBtn.margin = JBUI.insets(2, 7)
+        assertionHintLabel.foreground = JBColor.GRAY
+        assertionBtnBar.add(addAssertionBtn)
+        assertionBtnBar.add(addAssertionFromResponseBtn)
+        assertionBtnBar.add(removeAssertionBtn)
+        assertionBtnBar.add(assertionHintLabel)
+        assertionsPanel.add(assertionBtnBar, BorderLayout.SOUTH)
+
         editorTabs.addTab("Params", paramsPanel)
         editorTabs.addTab("Body (JSON)", bodyPanel)
         editorTabs.addTab("Headers", headersPanel)
         editorTabs.addTab("응답 변수 추출", extractPanel)
+        editorTabs.addTab("응답 검증", assertionsPanel)
 
         panel.add(editorTabs, BorderLayout.CENTER)
         return panel
@@ -840,9 +891,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             add(JBScrollPane(responseBodyArea), BorderLayout.CENTER)
         }
 
-        // Tab 1: 추출 변수 (Extracted Variables — dedicated tab with Copy button)
+        // [v0.4.0] Tab 1: 추출 변수 (Value 컬럼 더블클릭 수동 Override + 수동 변수 추가/삭제 지원)
         extractedVarsTable.apply {
             rowHeight = 25
+            putClientProperty("terminateEditOnFocusLost", true)
             tableHeader.reorderingAllowed = false
             setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
             columnModel.getColumn(0).preferredWidth = 160
@@ -875,7 +927,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     val row = rowAtPoint(e.point)
                     val col = columnAtPoint(e.point)
                     if (row < 0) return
-                    if (col == 2 || e.clickCount == 2) {
+                    // 컬럼 1(Value) 더블클릭은 수동 Override 인라인 편집으로 동작하고, 컬럼 2(복사) 클릭 또는 컬럼 0 더블클릭 시 토큰 복사
+                    if (col == 2 || (col == 0 && e.clickCount == 2)) {
                         val varName = extractedVarsModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
                         if (varName.isNotEmpty()) {
                             val token = "{{$varName}}"
@@ -890,9 +943,18 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             font = font.deriveFont(Font.BOLD)
             border = JBUI.Borders.empty(2, 4)
         }
-        val extractedPanel = JPanel(BorderLayout()).apply {
+        extractedOverrideHintLabel.foreground = JBColor.GRAY
+        addOverrideVarBtn.margin = JBUI.insets(2, 7)
+        removeOverrideVarBtn.margin = JBUI.insets(2, 7)
+        val extractedBottomBar = createWrapBar().apply {
+            add(addOverrideVarBtn)
+            add(removeOverrideVarBtn)
+            add(extractedOverrideHintLabel)
+        }
+        val extractedPanel = JPanel(BorderLayout(0, 4)).apply {
             add(extractedHeaderLabel, BorderLayout.NORTH)
             add(JBScrollPane(extractedVarsTable), BorderLayout.CENTER)
+            add(extractedBottomBar, BorderLayout.SOUTH)
         }
 
         // Tab 2: 실행 및 에러 로그 (Execution & Error Logs + Clear Log button)
@@ -943,7 +1005,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         saveBtn.addActionListener { saveCurrentScenario(showFeedback = true) }
         globalConfigBtn.addActionListener { openGlobalConfigDialog() }
         variablesHelpBtn.addActionListener { openVariablesCheatSheet() }
-        curlCopyBtn.addActionListener { showCurlCopyMenu() }
+        curlCopyBtn.addActionListener { openCurlManagerDialog() }
         updateCheckBtn.addActionListener { handleUpdateCheckButtonClick() }
 
         baseUrlField.document.addDocumentListener(simpleDocListener {
@@ -1093,6 +1155,39 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             openExtractRuleFromResponse(useCaretOffset = true)
         }
 
+        // [v0.4.0] Assertions Tab buttons
+        addAssertionBtn.addActionListener {
+            openAddAssertionRuleDialog(useResponseCandidates = false, useCaretOffset = false)
+        }
+        addAssertionFromResponseBtn.addActionListener {
+            openAddAssertionRuleDialog(useResponseCandidates = true, useCaretOffset = false)
+        }
+        removeAssertionBtn.addActionListener {
+            stopTableEditing(assertionsTable)
+            val rows = assertionsTable.selectedRows
+            for (i in rows.indices.reversed()) {
+                assertionsTableModel.removeRow(rows[i])
+            }
+            syncEditorToCurrentStep()
+            updateAssertionsTabTitle()
+        }
+
+        // [v0.4.0] Extracted Vars manual override (memory-only, never writes to disk)
+        addOverrideVarBtn.addActionListener { addManualRuntimeOverrideVar() }
+        removeOverrideVarBtn.addActionListener { removeSelectedRuntimeOverrideVar() }
+        extractedVarsModel.addTableModelListener { e ->
+            if (!isUpdatingUi && e.type == TableModelEvent.UPDATE && e.column == 1 && e.firstRow >= 0) {
+                val row = e.firstRow
+                if (row in 0 until extractedVarsModel.rowCount) {
+                    val varName = extractedVarsModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
+                    val newVal = extractedVarsModel.getValueAt(row, 1)?.toString().orEmpty()
+                    if (varName.isNotEmpty()) {
+                        lastRuntimeContext[varName] = newVal
+                    }
+                }
+            }
+        }
+
         // Center Pane auto-sync to step model
         stepAliasField.document.addDocumentListener(simpleDocListener { if (!isUpdatingUi) syncEditorToCurrentStep() })
         methodComboBox.addActionListener { if (!isUpdatingUi) syncEditorToCurrentStep() }
@@ -1117,6 +1212,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     validateInlineExtractRuleVarName(e.firstRow)
                 }
                 syncEditorToCurrentStep()
+            }
+        }
+        assertionsTableModel.addTableModelListener { e ->
+            if (!isUpdatingUi && e.type != TableModelEvent.HEADER_ROW) {
+                syncEditorToCurrentStep()
+                updateAssertionsTabTitle()
             }
         }
     }
@@ -1177,6 +1278,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             scenarioVariablesProvider = varsProvider,
             onValueUpdated = { syncEditorToCurrentStep() }
         )
+        VariableContextMenuSupport.installOnTableValueColumn(
+            table = assertionsTable,
+            valueColumnIndex = 3,
+            scenarioVariablesProvider = varsProvider,
+            onValueUpdated = { syncEditorToCurrentStep() }
+        )
 
         responseBodyArea.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) = maybeShowResponseMenu(e)
@@ -1194,7 +1301,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     isEnabled = responseBodyArea.text.trim().isNotEmpty() && getActiveEditableStep() != null
                     addActionListener { openExtractRuleFromResponse(useCaretOffset = true) }
                 }
+                val assertionItem = JMenuItem(I18nManager.t("result.context.addAssertionRule")).apply {
+                    isEnabled = responseBodyArea.text.trim().isNotEmpty() && getActiveEditableStep() != null
+                    addActionListener { openAddAssertionRuleDialog(useResponseCandidates = true, useCaretOffset = true) }
+                }
                 popup.add(extractItem)
+                popup.add(assertionItem)
                 popup.addSeparator()
                 popup.add(JMenuItem(I18nManager.t("vars.menu.copy")).apply {
                     isEnabled = responseBodyArea.selectedText != null
@@ -1588,85 +1700,197 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         topToolbarPanel.revalidate()
     }
 
-    // --- Copy as cURL ---
+    // --- [v0.4.0] Unified cURL Manager Dialog (Export Preview + Smart Import) ---
 
-    private fun showCurlCopyMenu() {
-        val copyStepLabel = I18nManager.t("curl.menu.step")
-        val copyScenarioLabel = I18nManager.t("curl.menu.scenario")
-        val actions = listOf(copyStepLabel, copyScenarioLabel)
-
-        val popupStep = object : BaseListPopupStep<String>(I18nManager.t("curl.menu.title"), actions) {
-            override fun onChosen(selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
-                return doFinalStep {
-                    when (selectedValue) {
-                        copyStepLabel -> copyCurrentStepAsCurl()
-                        copyScenarioLabel -> copyFullScenarioAsCurl()
-                    }
-                }
-            }
-        }
-        JBPopupFactory.getInstance()
-            .createListPopup(popupStep)
-            .showUnderneathOf(curlCopyBtn)
-    }
-
-    private fun copyCurrentStepAsCurl() {
+    private fun openCurlManagerDialog() {
         stopAllTableEdits()
         syncEditorToCurrentStep()
-
-        val activeStep = getActiveEditableStep()
-        if (activeStep == null) {
-            Messages.showInfoMessage(project, I18nManager.t("curl.noStep.msg"), "Maekom API Runner")
-            return
-        }
 
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
-        val secrets = storage.loadSecrets()
-        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
-        val curl = CurlExporter.exportStep(
-            step = activeStep,
+        val dialog = CurlManagerDialog(
+            project = project,
             scenario = currentScenario,
-            runtimeContext = lastRuntimeContext,
-            secrets = secrets,
-            projectGlobalVariables = projectGlobals
+            activeStep = getActiveEditableStep(),
+            runtimeContext = LinkedHashMap(lastRuntimeContext),
+            secrets = storage.loadSecrets(),
+            projectGlobalVariables = storage.loadEnabledGlobalVariablesMap(),
+            onAddNewStep = { parsed -> applyImportedCurlAsNewStep(parsed) },
+            onOverwriteCurrentStep = { parsed -> applyImportedCurlToCurrentStep(parsed) }
         )
-        CopyPasteManager.getInstance().setContents(StringSelection(curl))
-
-        scenarioStatusLabel.text = I18nManager.t("status.curlCopied", activeStep.displayTitle())
-        scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
-        revalidateNativeHeaderComponents()
-        showBalloon(curlCopyBtn, I18nManager.t("curl.copied.step.msg"), MessageType.INFO)
+        dialog.show()
     }
 
-    private fun copyFullScenarioAsCurl() {
-        stopAllTableEdits()
-        syncEditorToCurrentStep()
+    // [v0.4.0] cURL 가져오기 결과를 새 스텝으로 메모리 세션에 추가 (사용자가 [저장] 클릭 전까지 디스크 미덮어쓰기)
+    private fun applyImportedCurlAsNewStep(parsed: ParsedCurlResult) {
+        isQuickSingleMode = false
+        quickSingleStep = null
+        lastQuickEndpoint = null
+        quickModeBanner.isVisible = false
 
-        if (currentScenario.steps.isEmpty()) {
-            Messages.showInfoMessage(project, I18nManager.t("curl.noScenarioSteps.msg"), "Maekom API Runner")
-            return
-        }
+        val newStep = parsed.toApiStep()
+        currentScenario.steps.add(newStep)
+        stepStatuses[newStep.id] = StepStatus.PENDING
+        stepTableModel.fireTableDataChanged()
+        selectStepRow(currentScenario.steps.lastIndex)
+        updateDirtyIndicator()
 
-        currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
-        currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
-
-        val secrets = storage.loadSecrets()
-        val projectGlobals = storage.loadEnabledGlobalVariablesMap()
-        val script = CurlExporter.exportScenario(
-            scenario = currentScenario,
-            runtimeContext = lastRuntimeContext,
-            secrets = secrets,
-            projectGlobalVariables = projectGlobals
-        )
-        CopyPasteManager.getInstance().setContents(StringSelection(script))
-
-        val msg = I18nManager.t("curl.copied.scenario.msg", currentScenario.steps.size)
-        scenarioStatusLabel.text = I18nManager.t("status.curlCopied", currentScenario.name)
+        val msg = I18nManager.t("curl.import.appliedStatus")
+        scenarioStatusLabel.text = msg
         scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
         revalidateNativeHeaderComponents()
         showBalloon(curlCopyBtn, msg, MessageType.INFO)
+    }
+
+    // [v0.4.0] cURL 가져오기 결과를 현재 선택 스텝에 메모리 세션 덮어쓰기 (기존 추출/검증 규칙은 보존)
+    private fun applyImportedCurlToCurrentStep(parsed: ParsedCurlResult) {
+        val target = getActiveEditableStep() ?: return
+        target.method = parsed.method
+        target.url = parsed.url
+        target.queryParams = parsed.queryParams.map { it.deepCopy() }.toMutableList()
+        target.headers = LinkedHashMap(parsed.headers)
+        target.body = parsed.body
+
+        isUpdatingUi = true
+        try {
+            populateEditorFields(target)
+        } finally {
+            isUpdatingUi = false
+        }
+        syncEditorToCurrentStep()
+
+        val msg = I18nManager.t("curl.import.appliedStatus")
+        scenarioStatusLabel.text = msg
+        scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+        revalidateNativeHeaderComponents()
+        showBalloon(curlCopyBtn, msg, MessageType.INFO)
+    }
+
+    // --- [v0.4.0] No-Code Response Assertion Popup & Tab Badge ---
+
+    private fun openAddAssertionRuleDialog(useResponseCandidates: Boolean, useCaretOffset: Boolean) {
+        if (getActiveEditableStep() == null) {
+            Messages.showInfoMessage(project, I18nManager.t("extractDialog.noStep.msg"), "Maekom API Runner")
+            return
+        }
+        val jsonText = responseBodyArea.text
+        val candidates = if (useResponseCandidates) JsonPathLocator.extractAllCandidates(jsonText) else emptyList()
+        if (useResponseCandidates && candidates.isEmpty()) {
+            Messages.showWarningDialog(
+                project,
+                I18nManager.t("extractDialog.noJson.msg"),
+                I18nManager.t("extractDialog.noJson.title")
+            )
+            return
+        }
+        val initialCandidate = if (useResponseCandidates && useCaretOffset) {
+            JsonPathLocator.locateAtOffset(jsonText, responseBodyArea.caretPosition)
+        } else {
+            null
+        }
+
+        val dialog = AddAssertionRuleDialog(
+            project = project,
+            candidates = candidates,
+            initialCandidate = initialCandidate
+        )
+        if (dialog.showAndGet()) {
+            val newRule = dialog.toAssertionRule()
+            stopTableEditing(assertionsTable)
+            isUpdatingUi = true
+            try {
+                assertionsTableModel.addRow(arrayOf<Any>(newRule.enabled, newRule.jsonPath, newRule.operator, newRule.expectedValue))
+            } finally {
+                isUpdatingUi = false
+            }
+            val lastRow = assertionsTableModel.rowCount - 1
+            if (lastRow >= 0) {
+                assertionsTable.setRowSelectionInterval(lastRow, lastRow)
+            }
+            syncEditorToCurrentStep()
+            updateAssertionsTabTitle()
+            editorTabs.selectedIndex = TAB_ASSERTIONS
+
+            val statusMsg = I18nManager.t("status.assertionRuleAdded", newRule.jsonPath, newRule.operator, newRule.expectedValue)
+            scenarioStatusLabel.text = statusMsg
+            scenarioStatusLabel.foreground = JBColor(Color(0x2E, 0x7D, 0x32), Color(0x81, 0xC7, 0x84))
+            revalidateNativeHeaderComponents()
+        }
+    }
+
+    private fun updateAssertionsTabTitle() {
+        var enabledCount = 0
+        for (i in 0 until assertionsTableModel.rowCount) {
+            val enabled = (assertionsTableModel.getValueAt(i, 0) as? Boolean) ?: true
+            val path = (assertionsTableModel.getValueAt(i, 1)?.toString() ?: "").trim()
+            if (enabled && path.isNotEmpty()) enabledCount++
+        }
+        val title = if (enabledCount > 0) {
+            I18nManager.t("editor.tab.assertionsCount", enabledCount)
+        } else {
+            I18nManager.t("editor.tab.assertions")
+        }
+        if (editorTabs.tabCount > TAB_ASSERTIONS) {
+            editorTabs.setTitleAt(TAB_ASSERTIONS, title)
+        }
+    }
+
+    // --- [v0.4.0] Extracted Vars Manual Override (Memory Session Only) ---
+
+    private fun addManualRuntimeOverrideVar() {
+        stopTableEditing(extractedVarsTable)
+        val rawName = Messages.showInputDialog(
+            project,
+            I18nManager.t("extracted.override.promptName"),
+            I18nManager.t("extracted.override.promptTitle"),
+            Messages.getQuestionIcon()
+        )?.trim()
+        if (rawName.isNullOrBlank()) return
+
+        val rawValue = Messages.showInputDialog(
+            project,
+            I18nManager.t("extracted.override.promptValue"),
+            I18nManager.t("extracted.override.promptTitle"),
+            Messages.getQuestionIcon(),
+            lastRuntimeContext[rawName].orEmpty(),
+            null
+        ) ?: return
+
+        lastRuntimeContext[rawName] = rawValue
+        refreshExtractedVarsTable()
+    }
+
+    private fun removeSelectedRuntimeOverrideVar() {
+        stopTableEditing(extractedVarsTable)
+        val row = extractedVarsTable.selectedRow
+        if (row !in 0 until extractedVarsModel.rowCount) return
+        val varName = extractedVarsModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
+        if (varName.isNotEmpty()) {
+            lastRuntimeContext.remove(varName)
+            refreshExtractedVarsTable()
+        }
+    }
+
+    private fun refreshExtractedVarsTable(extraStepVars: Map<String, String> = emptyMap()) {
+        val merged = linkedMapOf<String, String>()
+        merged.putAll(lastRuntimeContext)
+        for ((k, v) in extraStepVars) {
+            if (!merged.containsKey(k)) {
+                merged[k] = v
+            }
+        }
+        isUpdatingUi = true
+        try {
+            extractedVarsModel.rowCount = 0
+            val copyLabel = I18nManager.t("vars.copyBtn")
+            for ((k, v) in merged) {
+                extractedVarsModel.addRow(arrayOf<Any>(k, v, copyLabel))
+            }
+        } finally {
+            isUpdatingUi = false
+        }
+        updateExtractedVarsTabTitle()
     }
 
     private fun showBalloon(anchor: Component, message: String, type: MessageType) {
@@ -1747,6 +1971,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         editorTabs.setTitleAt(TAB_BODY, I18nManager.t("editor.tab.body"))
         editorTabs.setTitleAt(TAB_HEADERS, I18nManager.t("editor.tab.headers"))
         editorTabs.setTitleAt(TAB_EXTRACT, I18nManager.t("editor.tab.extract"))
+        updateAssertionsTabTitle()
 
         updateTableHeaders(
             paramsTable,
@@ -1781,6 +2006,22 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         extractGuideBtn.text = I18nManager.t("extract.guide")
         extractGuideBtn.toolTipText = I18nManager.t("extract.guide.tooltip")
         extractHintLabel.text = I18nManager.t("extract.hint")
+
+        updateTableHeaders(
+            assertionsTable,
+            I18nManager.t("assert.col.enabled"),
+            I18nManager.t("assert.col.jsonPath"),
+            I18nManager.t("assert.col.operator"),
+            I18nManager.t("assert.col.expected")
+        )
+        addAssertionBtn.text = I18nManager.t("assert.add")
+        addAssertionFromResponseBtn.text = I18nManager.t("assert.addFromResponse")
+        removeAssertionBtn.text = I18nManager.t("assert.remove")
+        assertionHintLabel.text = I18nManager.t("assert.hint")
+
+        extractedOverrideHintLabel.text = I18nManager.t("extracted.override.hint")
+        addOverrideVarBtn.text = I18nManager.t("extracted.override.add")
+        removeOverrideVarBtn.text = I18nManager.t("extracted.override.remove")
 
         resultStatusTitleLabel.text = I18nManager.t("result.statusLabel")
         resultDurationTitleLabel.text = I18nManager.t("result.durationLabel")
@@ -2303,6 +2544,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                 headersTableModel.rowCount = 0
                 bodyTextArea.text = ""
                 extractRulesTableModel.rowCount = 0
+                assertionsTableModel.rowCount = 0
+                updateAssertionsTabTitle()
                 setEditorEnabled(false)
             } else {
                 setEditorEnabled(true)
@@ -2349,6 +2592,12 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         for (rule in step.extractRules) {
             extractRulesTableModel.addRow(arrayOf<Any>(rule.varName, rule.jsonPath, rule.required))
         }
+
+        assertionsTableModel.rowCount = 0
+        for (assertion in step.assertions) {
+            assertionsTableModel.addRow(arrayOf<Any>(assertion.enabled, assertion.jsonPath, assertion.operator, assertion.expectedValue))
+        }
+        updateAssertionsTabTitle()
     }
 
     private fun setEditorEnabled(enabled: Boolean) {
@@ -2369,6 +2618,10 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         extractRulesTable.isEnabled = enabled
         addRuleBtn.isEnabled = enabled
         removeRuleBtn.isEnabled = enabled
+        assertionsTable.isEnabled = enabled
+        addAssertionBtn.isEnabled = enabled
+        addAssertionFromResponseBtn.isEnabled = enabled
+        removeAssertionBtn.isEnabled = enabled
     }
 
     private fun syncEditorToCurrentStep() {
@@ -2411,6 +2664,25 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
         step.extractRules = rules
 
+        val assertions = mutableListOf<AssertionRule>()
+        for (i in 0 until assertionsTableModel.rowCount) {
+            val enabled = (assertionsTableModel.getValueAt(i, 0) as? Boolean) ?: true
+            val jsonPath = (assertionsTableModel.getValueAt(i, 1)?.toString() ?: "").trim()
+            val operator = (assertionsTableModel.getValueAt(i, 2)?.toString() ?: AssertionOperator.EQUALS.symbol).trim()
+            val expected = assertionsTableModel.getValueAt(i, 3)?.toString() ?: ""
+            if (jsonPath.isNotEmpty() || expected.isNotEmpty()) {
+                assertions.add(
+                    AssertionRule(
+                        enabled = enabled,
+                        jsonPath = jsonPath,
+                        operator = operator.ifEmpty { AssertionOperator.EQUALS.symbol },
+                        expectedValue = expected
+                    )
+                )
+            }
+        }
+        step.assertions = assertions
+
         if (!isQuickSingleMode) {
             val selectedRow = stepTable.selectedRow
             if (selectedRow in currentScenario.steps.indices) {
@@ -2425,6 +2697,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         stopTableEditing(paramsTable)
         stopTableEditing(headersTable)
         stopTableEditing(extractRulesTable)
+        stopTableEditing(assertionsTable)
+        stopTableEditing(extractedVarsTable)
     }
 
     private fun stopTableEditing(table: JBTable) {
@@ -2461,9 +2735,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     // --- Execution Engine (Background Thread -> EDT invokeLater) ---
 
-    // [v0.2.0] 전체 시나리오 실행 종료 후 상태 배지가 '실행 중...'에 멈추는 버그 수정
-    // 변경 의도: try/finally + 세대 카운터(runGeneration)로 성공·실패·중지·예외 모든 종료 시점에 최종 상태와 isRunning=false를 확정 갱신
-    private fun executeFullScenario() {
+    // [v0.4.0] 전체 또는 선행 스텝(1~N번) 순차 실행 지원(maxStepIndex) 및 실행 완료 상태 확정 갱신
+    private fun executeFullScenario(maxStepIndex: Int? = null, skipProtectedConfirm: Boolean = false) {
         if (isRunning) return
         stopAllTableEdits()
         syncEditorToCurrentStep()
@@ -2472,7 +2745,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             Messages.showInfoMessage(project, I18nManager.t("dialog.noSteps.msg"), "Maekom API Runner")
             return
         }
-        if (!confirmProtectedEnvironmentExecution(isFullScenario = true)) return
+        if (!skipProtectedConfirm && !confirmProtectedEnvironmentExecution(isFullScenario = true)) return
 
         isQuickSingleMode = false
         quickModeBanner.isVisible = false
@@ -2480,6 +2753,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
+        val effectiveMaxIndex = (maxStepIndex ?: currentScenario.steps.lastIndex)
+            .coerceIn(0, currentScenario.steps.lastIndex)
         val scenarioSnapshot = currentScenario.deepCopy()
         for (i in currentScenario.steps.indices) {
             scenarioSnapshot.steps[i].id = currentScenario.steps[i].id
@@ -2502,7 +2777,8 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         revalidateNativeHeaderComponents()
 
         clearExecutionLog()
-        appendExecutionLog("=== ▶ Scenario Run: ${scenarioSnapshot.name} (${scenarioSnapshot.steps.size} steps) ===\n")
+        val runCount = effectiveMaxIndex + 1
+        appendExecutionLog("=== ▶ Scenario Run: ${scenarioSnapshot.name} ($runCount/${scenarioSnapshot.steps.size} steps) ===\n")
 
         ApplicationManager.getApplication().executeOnPooledThread {
             var completedSummary: ScenarioExecutionSummary? = null
@@ -2512,6 +2788,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
                     scenario = scenarioSnapshot,
                     secrets = secrets,
                     projectGlobalVariables = projectGlobals,
+                    maxStepIndex = effectiveMaxIndex,
                     listener = object : ScenarioRunListener {
                         override fun onStepStarted(stepIndex: Int, step: ApiStep) {
                             val delayNote = if (step.delayMs > 0L) " (delay ${step.delayMs} ms)" else ""
@@ -2627,7 +2904,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    // [v0.2.0] 단건 실행 시 좌측 실행 스텝 목록의 선택 행이 풀리거나 편집 패널 데이터가 꼬이지 않도록 선택 상태 완벽 보존
+    // [v0.4.0] 단건 실행 직전 선행 변수 누락 감지 가드(1~N번 순차 실행 / 강제 실행 / 취소) 및 선택 행 보존
     private fun executeCurrentSingleStep() {
         if (isRunning) return
         stopAllTableEdits()
@@ -2641,10 +2918,57 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         currentScenario.baseUrl = baseUrlField.text.trim().ifEmpty { "http://localhost:8080" }
         currentScenario.ignoreSsl = ignoreSslCheckbox.isSelected
 
-        val scenarioSnapshot = currentScenario.deepCopy()
-        val stepSnapshot = activeStep.deepCopy().apply { id = activeStep.id }
         val secrets = storage.loadSecrets()
         val projectGlobals = storage.loadEnabledGlobalVariablesMap()
+        val missingVars = VariableResolver.findMissingVariables(
+            step = activeStep,
+            scenario = currentScenario,
+            runtimeContext = lastRuntimeContext,
+            secrets = secrets,
+            projectGlobalVariables = projectGlobals
+        )
+        if (missingVars.isNotEmpty()) {
+            val formattedVars = missingVars.joinToString(", ") { "{{$it}}" }
+            if (!isQuickSingleMode && selectedRowBeforeRun > 0) {
+                val targetStepNo = selectedRowBeforeRun + 1
+                val choice = Messages.showDialog(
+                    project,
+                    I18nManager.t("missingVar.msgWithPrev", formattedVars, targetStepNo),
+                    I18nManager.t("missingVar.title"),
+                    arrayOf(
+                        I18nManager.t("missingVar.runFromPrev", targetStepNo),
+                        I18nManager.t("missingVar.forceRun"),
+                        I18nManager.t("missingVar.cancel")
+                    ),
+                    0,
+                    Messages.getWarningIcon()
+                )
+                when (choice) {
+                    0 -> {
+                        executeFullScenario(maxStepIndex = selectedRowBeforeRun, skipProtectedConfirm = true)
+                        return
+                    }
+                    1 -> { /* Proceed with forced single-step execution */ }
+                    else -> return
+                }
+            } else {
+                val choice = Messages.showDialog(
+                    project,
+                    I18nManager.t("missingVar.msgNoPrev", formattedVars),
+                    I18nManager.t("missingVar.title"),
+                    arrayOf(
+                        I18nManager.t("missingVar.forceRun"),
+                        I18nManager.t("missingVar.cancel")
+                    ),
+                    0,
+                    Messages.getWarningIcon()
+                )
+                if (choice != 0) return
+            }
+        }
+
+        val scenarioSnapshot = currentScenario.deepCopy()
+        val stepSnapshot = activeStep.deepCopy().apply { id = activeStep.id }
         val contextCopy = LinkedHashMap(lastRuntimeContext)
         val generation = runGeneration.incrementAndGet()
 
@@ -2737,7 +3061,6 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     private fun displayStepResult(result: StepExecutionResult?, overwriteLog: Boolean = true) {
         lastDisplayedResult = result
-        extractedVarsModel.rowCount = 0
 
         if (result == null) {
             statusBadgeLabel.text = I18nManager.t("result.idle")
@@ -2747,7 +3070,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             if (overwriteLog) {
                 detailLogArea.text = ""
             }
-            updateExtractedVarsTabTitle()
+            refreshExtractedVarsTable()
             revalidateNativeHeaderComponents()
             return
         }
@@ -2775,11 +3098,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             durationLabel.text = "${resp?.durationMs ?: 0} ms"
         }
 
-        val copyLabel = I18nManager.t("vars.copyBtn")
-        for ((k, v) in result.extractedVariables) {
-            extractedVarsModel.addRow(arrayOf<Any>(k, v, copyLabel))
-        }
-        updateExtractedVarsTabTitle()
+        refreshExtractedVarsTable(result.extractedVariables)
 
         responseBodyArea.text = when {
             resp != null && resp.formattedBody.isNotEmpty() -> resp.formattedBody
@@ -2803,6 +3122,13 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         appendLine(I18nManager.t("log.stepStatus", result.status))
         if (result.failureReason != null) {
             appendLine(I18nManager.t("log.failReason", result.failureReason))
+        }
+        if (result.assertionResults.isNotEmpty()) {
+            appendLine("-- Response Assertions (${result.assertionResults.count { it.passed }}/${result.assertionResults.size} PASS) --")
+            result.assertionResults.forEach { eval ->
+                val icon = if (eval.passed) "✅" else "❌"
+                appendLine("  $icon ${eval.message}")
+            }
         }
         if (result.extractionWarnings.isNotEmpty()) {
             appendLine(I18nManager.t("log.warnings"))

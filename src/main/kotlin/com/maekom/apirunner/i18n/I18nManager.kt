@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.3.2] 스텝 별칭(Alias), 실행 전 대기 시간(Delay ms), 환경 보호 모드(PRD 확인 팝업) KO/EN 다국어 문구 추가
-// 변경 의도: v0.3.2 신규 UX·안전장치 UI 컴포넌트와 경고 다이얼로그를 한국어/영어 양국어 번들에 완벽 동기화
+// [v0.4.0] [cURL] 통합 다이얼로그(내보내기/가져오기), 응답 검증(No-Code Assertion), 선행 변수 누락 보호 및 추출 변수 Override KO/EN 문구 추가
+// 변경 의도: v0.4.0 신규 다이얼로그·탭·버튼·경고 문구를 한국어/영어 양국어 번들에 완벽 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -128,8 +128,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.globalConfig" to "공통 헤더 관리",
             "toolbar.variables" to "변수 관리",
             "toolbar.variables.tooltip" to "프로젝트 전역 변수, 내장 동적 변수 및 시나리오 추출 변수 통합 관리",
-            "toolbar.curl" to "cURL 복사",
-            "toolbar.curl.tooltip" to "현재 스텝 또는 전체 시나리오를 cURL 명령어로 복사",
+            "toolbar.curl" to "cURL",
+            "toolbar.curl.tooltip" to "cURL 내보내기 미리보기·복사 및 스마트 cURL 가져오기",
             "toolbar.updateCheck" to "업데이트 확인",
             "toolbar.updateCheck.checking" to "확인 중...",
             "toolbar.updateCheck.tooltip" to "GitHub 최신 릴리즈 버전을 즉시 확인",
@@ -229,6 +229,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "editor.tab.body" to "Body (JSON)",
             "editor.tab.headers" to "Headers",
             "editor.tab.extract" to "응답 변수 추출",
+            "editor.tab.assertions" to "응답 검증",
+            "editor.tab.assertionsCount" to "응답 검증 (%d)",
 
             // Params Tab
             "params.col.enabled" to "전송",
@@ -557,7 +559,66 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "explorer.status.createdFolder" to "📁 폴더 생성됨: %s",
             "explorer.status.createdScenario" to "✨ 시나리오 생성됨: %s",
             "explorer.status.imported" to "📥 시나리오 불러오기 완료: %s",
-            "explorer.status.exported" to "📤 시나리오 내보내기 완료: %s"
+            "explorer.status.exported" to "📤 시나리오 내보내기 완료: %s",
+
+            // [v0.4.0] Unified cURL Manager Dialog (Export Preview + Smart Import)
+            "curl.dialog.title" to "cURL 내보내기 / 가져오기",
+            "curl.dialog.close" to "닫기",
+            "curl.tab.export" to "내보내기 / 복사 (Export)",
+            "curl.tab.import" to "가져오기 (Import)",
+            "curl.export.targetLabel" to "대상:",
+            "curl.export.targetStep" to "현재 선택된 스텝",
+            "curl.export.targetScenario" to "전체 시나리오 (순차 스크립트)",
+            "curl.export.resolveEnv" to "현재 환경 BaseURL 및 공통 헤더·변수 값 치환 적용",
+            "curl.export.maskSecrets" to "Secret 항목 마스킹 (****)",
+            "curl.export.copyBtn" to "📋 클립보드에 복사",
+            "curl.export.copiedStatus" to "✅ 클립보드에 복사되었습니다.",
+            "curl.import.hint" to "멀티라인 cURL 명령어(bash \\, Windows cmd ^, -X, -H, -d/--data-raw, --url 지원)를 붙여넣으세요:",
+            "curl.import.stripBaseUrl" to "현재 환경 BaseURL과 일치하는 호스트 자동 제거 (상대 Path로 변환)",
+            "curl.import.excludeCommonHeaders" to "활성 공통 헤더와 키·값이 동일한 중복 헤더 자동 제외",
+            "curl.import.summaryEmpty" to "cURL 명령어를 붙여넣으면 파싱 결과가 여기에 표시됩니다.",
+            "curl.import.summaryOk" to "✅ Method: %s  |  Path: %s  |  Params: %d개  |  Headers: %d개  |  Body: %s",
+            "curl.import.summaryNote" to " (정제: %s)",
+            "curl.import.noteBaseStripped" to "BaseURL 제거됨",
+            "curl.import.noteHeadersRemoved" to "중복 공통 헤더 %d개 제외",
+            "curl.import.bodyYes" to "있음",
+            "curl.import.bodyNo" to "없음",
+            "curl.import.addNewStep" to "➕ 새 스텝으로 추가",
+            "curl.import.overwriteStep" to "📝 현재 스텝에 덮어쓰기",
+            "curl.import.appliedStatus" to "✅ cURL 가져오기 반영됨 (저장 전까지 메모리 세션 유지)",
+
+            // [v0.4.0] No-Code Response Assertions
+            "assert.col.enabled" to "활성",
+            "assert.col.jsonPath" to "JsonPath",
+            "assert.col.operator" to "연산자",
+            "assert.col.expected" to "기대값 (Expected)",
+            "assert.add" to "+ 규칙 추가",
+            "assert.addFromResponse" to "🧪 응답에서 규칙 추가",
+            "assert.remove" to "- 삭제",
+            "assert.hint" to "  ✅ HTTP 상태 통과 후에도 검증 실패 시 FAIL 처리 (기대값에 {{변수명}} / {{\$...}} 지원)",
+            "assert.dialog.title" to "응답 본문 검증 규칙 추가",
+            "assert.dialog.fieldSelect" to "응답 JSON 필드 선택 (선택):",
+            "assert.dialog.jsonPath" to "JsonPath:",
+            "assert.dialog.operator" to "연산자:",
+            "assert.dialog.expected" to "기대값 (Expected):",
+            "assert.dialog.enabled" to "규칙 활성화",
+            "assert.dialog.invalidPath" to "JsonPath를 입력하세요 (예: $.code).",
+            "result.context.addAssertionRule" to "✅ 이 필드로 응답 검증 규칙 추가",
+            "status.assertionRuleAdded" to "✅ 응답 검증 규칙 추가됨: %s %s %s",
+
+            // [v0.4.0] Single-Step Missing Variable Guard & Extracted Vars Manual Override
+            "missingVar.title" to "선행 변수 값 누락 감지",
+            "missingVar.msgWithPrev" to "현재 스텝에서 참조하는 아래 변수에 값이 비어 있습니다:\n\n%s\n\n선행 스텝(1~%d번)부터 순차 실행하여 변수를 채우시겠습니까?",
+            "missingVar.msgNoPrev" to "현재 스텝에서 참조하는 아래 변수에 값이 비어 있습니다:\n\n%s\n\n'추출 변수' 탭에서 값을 직접 입력(Override)하거나 현재 값으로 강제 실행할 수 있습니다.",
+            "missingVar.runFromPrev" to "선행 스텝(1~%d번)부터 순차 실행",
+            "missingVar.forceRun" to "현재 값으로 강제 실행",
+            "missingVar.cancel" to "취소",
+            "extracted.override.hint" to "💡 Value 셀을 더블클릭해 임시 값을 직접 입력(Override)할 수 있습니다 (메모리 세션 전용).",
+            "extracted.override.add" to "+ 수동 변수 추가",
+            "extracted.override.remove" to "- 삭제",
+            "extracted.override.promptTitle" to "추출 변수 수동 추가 (Override)",
+            "extracted.override.promptName" to "변수명을 입력하세요 (예: accessToken):",
+            "extracted.override.promptValue" to "임시 테스트 값을 입력하세요:"
         )
 
         private val EN_MESSAGES: Map<String, String> = mapOf(
@@ -577,8 +638,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "toolbar.globalConfig" to "Common Headers",
             "toolbar.variables" to "Variables",
             "toolbar.variables.tooltip" to "Manage Project Global Variables, Built-in Dynamic & Extracted Variables",
-            "toolbar.curl" to "Copy cURL",
-            "toolbar.curl.tooltip" to "Copy current step or full scenario as cURL commands",
+            "toolbar.curl" to "cURL",
+            "toolbar.curl.tooltip" to "Export cURL preview/copy & Smart cURL import",
             "toolbar.updateCheck" to "Check Updates",
             "toolbar.updateCheck.checking" to "Checking...",
             "toolbar.updateCheck.tooltip" to "Immediately check GitHub Releases for a newer plugin version",
@@ -677,6 +738,8 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "editor.tab.body" to "Body (JSON)",
             "editor.tab.headers" to "Headers",
             "editor.tab.extract" to "Extract Rules",
+            "editor.tab.assertions" to "Assertions",
+            "editor.tab.assertionsCount" to "Assertions (%d)",
 
             // Params Tab
             "params.col.enabled" to "Send",
@@ -1005,7 +1068,66 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "explorer.status.createdFolder" to "📁 Folder created: %s",
             "explorer.status.createdScenario" to "✨ Scenario created: %s",
             "explorer.status.imported" to "📥 Imported scenario: %s",
-            "explorer.status.exported" to "📤 Exported scenario: %s"
+            "explorer.status.exported" to "📤 Exported scenario: %s",
+
+            // [v0.4.0] Unified cURL Manager Dialog (Export Preview + Smart Import)
+            "curl.dialog.title" to "cURL Export / Import",
+            "curl.dialog.close" to "Close",
+            "curl.tab.export" to "Export / Copy",
+            "curl.tab.import" to "Import",
+            "curl.export.targetLabel" to "Target:",
+            "curl.export.targetStep" to "Current Selected Step",
+            "curl.export.targetScenario" to "Full Scenario (Sequential Script)",
+            "curl.export.resolveEnv" to "Apply active BaseURL, Common Headers & variable substitution",
+            "curl.export.maskSecrets" to "Mask Secret values (****)",
+            "curl.export.copyBtn" to "📋 Copy to Clipboard",
+            "curl.export.copiedStatus" to "✅ Copied to clipboard.",
+            "curl.import.hint" to "Paste a multiline cURL command (supports bash \\, Windows cmd ^, -X, -H, -d/--data-raw, --url):",
+            "curl.import.stripBaseUrl" to "Auto-strip host matching active BaseURL (convert to relative Path)",
+            "curl.import.excludeCommonHeaders" to "Auto-exclude headers matching active Common Headers (key & value)",
+            "curl.import.summaryEmpty" to "Paste a cURL command above to preview parsed results.",
+            "curl.import.summaryOk" to "✅ Method: %s  |  Path: %s  |  Params: %d  |  Headers: %d  |  Body: %s",
+            "curl.import.summaryNote" to " (Cleanup: %s)",
+            "curl.import.noteBaseStripped" to "BaseURL stripped",
+            "curl.import.noteHeadersRemoved" to "%d duplicate common header(s) excluded",
+            "curl.import.bodyYes" to "Yes",
+            "curl.import.bodyNo" to "None",
+            "curl.import.addNewStep" to "➕ Add as New Step",
+            "curl.import.overwriteStep" to "📝 Overwrite Current Step",
+            "curl.import.appliedStatus" to "✅ cURL imported to memory session (click Save to persist)",
+
+            // [v0.4.0] No-Code Response Assertions
+            "assert.col.enabled" to "Active",
+            "assert.col.jsonPath" to "JsonPath",
+            "assert.col.operator" to "Operator",
+            "assert.col.expected" to "Expected Value",
+            "assert.add" to "+ Add Rule",
+            "assert.addFromResponse" to "🧪 Add from Response",
+            "assert.remove" to "- Delete",
+            "assert.hint" to "  ✅ Marks step FAILED if any rule fails (Expected supports {{var}} / {{\$...}})",
+            "assert.dialog.title" to "Add Response Assertion Rule",
+            "assert.dialog.fieldSelect" to "Pick Response JSON Field (Optional):",
+            "assert.dialog.jsonPath" to "JsonPath:",
+            "assert.dialog.operator" to "Operator:",
+            "assert.dialog.expected" to "Expected Value:",
+            "assert.dialog.enabled" to "Rule Enabled",
+            "assert.dialog.invalidPath" to "Please enter a JsonPath (e.g. $.code).",
+            "result.context.addAssertionRule" to "✅ Add Response Assertion for This Field",
+            "status.assertionRuleAdded" to "✅ Assertion rule added: %s %s %s",
+
+            // [v0.4.0] Single-Step Missing Variable Guard & Extracted Vars Manual Override
+            "missingVar.title" to "Missing Preceding Variables Detected",
+            "missingVar.msgWithPrev" to "The current step references undefined/empty variables:\n\n%s\n\nRun sequentially from Step 1 to %d to populate them first?",
+            "missingVar.msgNoPrev" to "The current step references undefined/empty variables:\n\n%s\n\nYou can manually override values in the 'Extracted Vars' tab or force run now.",
+            "missingVar.runFromPrev" to "Run Steps 1..%d Sequentially",
+            "missingVar.forceRun" to "Force Run Now",
+            "missingVar.cancel" to "Cancel",
+            "extracted.override.hint" to "💡 Double-click any Value cell to manually override for single-step debugging (memory-only).",
+            "extracted.override.add" to "+ Add Override Var",
+            "extracted.override.remove" to "- Delete",
+            "extracted.override.promptTitle" to "Add Manual Runtime Override",
+            "extracted.override.promptName" to "Enter variable name (e.g. accessToken):",
+            "extracted.override.promptValue" to "Enter temporary test value:"
         )
     }
 }

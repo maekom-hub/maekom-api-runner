@@ -4,9 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.util.UUID
 
-// [v0.3.2] 환경 프로필 보호 모드(confirmBeforeRun), 스텝 별칭(alias) 및 실행 전 대기 시간(delayMs) 선택 필드 추가
-// 변경 의도: 기존 .maekom/scenarios/*.json 및 environments.json과 100% 하위 호환(기본값 + ignoreUnknown)을 유지하면서
-//          PRD 실수 실행 방지, 스텝 목록 가독성 향상 및 스텝 간 지연 실행을 지원
+// [v0.4.0] 응답 본문 검증(No-Code Assertion: AssertionOperator, AssertionRule, AssertionEvalResult) 모델 추가
+// 변경 의도: 기존 .maekom/scenarios/**/*.json과의 100% 하위 호환성(기본값 emptyList + ignoreUnknown)을 유지하면서
+//          JSONPath 기반 응답 본문 검증 규칙 저장·평가 결과 추적을 지원
 
 enum class HttpMethod {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS;
@@ -97,6 +97,48 @@ data class ExtractRule(
     fun deepCopy(): ExtractRule = copy()
 }
 
+// [v0.4.0] No-Code 응답 본문 검증 연산자 및 규칙 모델
+enum class AssertionOperator(val symbol: String) {
+    EQUALS("=="),
+    NOT_EQUALS("!="),
+    CONTAINS("contains"),
+    EXISTS("exists"),
+    NOT_EXISTS("not_exists"),
+    GREATER_THAN(">"),
+    LESS_THAN("<"),
+    LENGTH_GT_ZERO("length > 0");
+
+    fun requiresExpectedValue(): Boolean = this !in setOf(EXISTS, NOT_EXISTS, LENGTH_GT_ZERO)
+
+    companion object {
+        val ALL_SYMBOLS: Array<String> = entries.map { it.symbol }.toTypedArray()
+
+        fun fromSymbol(raw: String?): AssertionOperator {
+            val trimmed = raw?.trim().orEmpty()
+            return entries.firstOrNull { it.symbol.equals(trimmed, ignoreCase = true) || it.name.equals(trimmed, ignoreCase = true) }
+                ?: EQUALS
+        }
+    }
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class AssertionRule(
+    var enabled: Boolean = true,
+    var jsonPath: String = "",
+    var operator: String = AssertionOperator.EQUALS.symbol,
+    var expectedValue: String = ""
+) {
+    fun deepCopy(): AssertionRule = copy()
+}
+
+data class AssertionEvalResult(
+    val rule: AssertionRule,
+    val passed: Boolean,
+    val resolvedExpected: String,
+    val actualDisplay: String,
+    val message: String
+)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ApiStep(
     var id: String = UUID.randomUUID().toString(),
@@ -110,7 +152,8 @@ data class ApiStep(
     var queryParams: MutableList<QueryParamItem> = mutableListOf(),
     var headers: MutableMap<String, String> = linkedMapOf(),
     var body: String = "",
-    var extractRules: MutableList<ExtractRule> = mutableListOf()
+    var extractRules: MutableList<ExtractRule> = mutableListOf(),
+    var assertions: MutableList<AssertionRule> = mutableListOf()
 ) {
     fun deepCopy(): ApiStep = ApiStep(
         id = UUID.randomUUID().toString(),
@@ -124,7 +167,8 @@ data class ApiStep(
         queryParams = queryParams.map { it.deepCopy() }.toMutableList(),
         headers = LinkedHashMap(headers),
         body = body,
-        extractRules = extractRules.map { it.deepCopy() }.toMutableList()
+        extractRules = extractRules.map { it.deepCopy() }.toMutableList(),
+        assertions = assertions.map { it.deepCopy() }.toMutableList()
     )
 
     @JsonIgnore
@@ -311,6 +355,7 @@ data class StepExecutionResult(
     val response: HttpExecutionResponse? = null,
     val extractedVariables: Map<String, String> = emptyMap(),
     val extractionWarnings: List<String> = emptyList(),
+    val assertionResults: List<AssertionEvalResult> = emptyList(),
     val failureReason: String? = null
 )
 

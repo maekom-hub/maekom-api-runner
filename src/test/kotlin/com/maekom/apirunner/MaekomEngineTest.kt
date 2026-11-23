@@ -2,9 +2,11 @@ package com.maekom.apirunner
 
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.maekom.apirunner.engine.AssertionEvaluator
 import com.maekom.apirunner.engine.BulkJsonVariableParser
 import com.maekom.apirunner.engine.BulkMergeMode
 import com.maekom.apirunner.engine.CurlExporter
+import com.maekom.apirunner.engine.CurlParser
 import com.maekom.apirunner.engine.HttpExecutor
 import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunner
@@ -15,6 +17,7 @@ import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.i18n.PluginLanguage
 import com.maekom.apirunner.model.ApiScenario
 import com.maekom.apirunner.model.ApiStep
+import com.maekom.apirunner.model.AssertionRule
 import com.maekom.apirunner.model.CommonHeaderItem
 import com.maekom.apirunner.model.EnvironmentProfile
 import com.maekom.apirunner.model.ExtractRule
@@ -229,7 +232,7 @@ class MaekomEngineTest {
         assertEquals(PluginLanguage.KO, manager.language)
         assertEquals("저장", manager.translate("toolbar.save"))
         assertEquals("✎ 이름 변경", manager.translate("toolbar.rename"))
-        assertEquals("cURL 복사", manager.translate("toolbar.curl"))
+        assertEquals("cURL", manager.translate("toolbar.curl"))
         assertEquals("공통 헤더 관리", manager.translate("toolbar.globalConfig"))
         assertEquals("변수 관리", manager.translate("toolbar.variables"))
         assertEquals("? 가이드", manager.translate("extract.guide"))
@@ -237,7 +240,7 @@ class MaekomEngineTest {
         assertEquals(PluginLanguage.EN, manager.toggleLanguage())
         assertEquals("Save", manager.translate("toolbar.save"))
         assertEquals("✎ Rename", manager.translate("toolbar.rename"))
-        assertEquals("Copy cURL", manager.translate("toolbar.curl"))
+        assertEquals("cURL", manager.translate("toolbar.curl"))
         assertEquals("Common Headers", manager.translate("toolbar.globalConfig"))
         assertEquals("Variables", manager.translate("toolbar.variables"))
         assertEquals("? Guide", manager.translate("extract.guide"))
@@ -717,5 +720,123 @@ class MaekomEngineTest {
         val elapsedMs = System.currentTimeMillis() - startMs
         assertEquals(StepStatus.FAILED, result.status)
         assertTrue(elapsedMs < 2_000L, "Expected prompt cancellation during delay, elapsed=${elapsedMs}ms")
+    }
+
+    // [v0.4.0] cURL 스마트 파서(bash/cmd 멀티라인, BaseURL 제거, 중복 공통 헤더 제외), 시크릿 마스킹 내보내기,
+    //          No-Code JSONPath 응답 검증 8종 연산자 및 단건 실행 누락 변수 스캔 단위 테스트
+    @Test
+    fun `curl smart parser, exporter masking, no-code assertions, and missing variable scanner work accurately`() {
+        // 1. Multiline bash cURL with query string, matching BaseURL, and duplicate common header
+        val bashCurl = """
+            curl -X POST 'https://dev-api.example.com/api/v1/orders?page=1&keyword=spicy%20chili' \
+              -H 'Content-Type: application/json' \
+              -H 'X-Trace-Id: trace-99' \
+              --data-raw '{"amount":15000,"items":["A","B"]}'
+        """.trimIndent()
+        val parsed = CurlParser.parse(
+            rawCurl = bashCurl,
+            activeBaseUrl = "https://dev-api.example.com",
+            enabledCommonHeaders = mapOf("content-type" to "application/json"),
+            stripMatchingBaseUrl = true,
+            excludeMatchingCommonHeaders = true
+        ).getOrThrow()
+        assertEquals("POST", parsed.method)
+        assertEquals("/api/v1/orders", parsed.url)
+        assertTrue(parsed.strippedBaseUrl)
+        assertEquals(1, parsed.removedCommonHeaderCount)
+        assertEquals(2, parsed.queryParams.size)
+        assertEquals("spicy chili", parsed.queryParams[1].value)
+        assertEquals(1, parsed.headers.size)
+        assertEquals("trace-99", parsed.headers["X-Trace-Id"])
+        assertTrue(parsed.body.contains("\"amount\""))
+
+        // 2. Windows cmd caret (^) continuation cURL
+        val cmdCurl = "curl --url \"http://localhost:8080/ping\" ^\r\n  -H \"Accept: application/json\""
+        val parsedCmd = CurlParser.parse(cmdCurl, activeBaseUrl = "http://localhost:8080").getOrThrow()
+        assertEquals("GET", parsedCmd.method)
+        assertEquals("/ping", parsedCmd.url)
+
+        // 3. CurlExporter secret masking & raw export mode
+        val secScenario = ApiScenario(
+            name = "sec",
+            baseUrl = "https://api.example.com",
+            commonHeaders = mutableListOf(
+                CommonHeaderItem(enabled = true, key = "X-Secret", value = "super-secret", secret = true)
+            )
+        )
+        val secStep = ApiStep(method = "GET", url = "/users/{{userId}}", headers = linkedMapOf("X-Secret" to ""))
+        val maskedCurl = CurlExporter.exportStep(
+            step = secStep,
+            scenario = secScenario,
+            secrets = mapOf("userId" to "u-42"),
+            resolveEnvironmentAndVars = true,
+            maskSecrets = true
+        )
+        assertTrue(maskedCurl.contains("X-Secret: ****"), "maskedCurl=$maskedCurl")
+        assertFalse(maskedCurl.contains("super-secret"), "maskedCurl=$maskedCurl")
+
+        val rawCurl = CurlExporter.exportStep(
+            step = secStep,
+            scenario = secScenario,
+            resolveEnvironmentAndVars = false
+        )
+        assertTrue(rawCurl.contains("/users/{{userId}}"), "rawCurl=$rawCurl")
+
+        // 4. No-Code JSONPath Assertions (all 8 operators + variable substitution in expectedValue)
+        val body = """
+            {
+              "code": 200,
+              "status": "SUCCESS",
+              "message": "Order created successfully",
+              "count": 5,
+              "tags": ["vip", "fast"],
+              "emptyList": []
+            }
+        """.trimIndent()
+        val rules = listOf(
+            AssertionRule(true, "$.code", "==", "{{expectedCode}}"),
+            AssertionRule(true, "$.status", "!=", "ERROR"),
+            AssertionRule(true, "$.message", "contains", "created"),
+            AssertionRule(true, "$.tags", "contains", "vip"),
+            AssertionRule(true, "$.status", "exists", ""),
+            AssertionRule(true, "$.errorDetail", "not_exists", ""),
+            AssertionRule(true, "$.count", ">", "3"),
+            AssertionRule(true, "$.count", "<", "10"),
+            AssertionRule(true, "$.tags", "length > 0", ""),
+            AssertionRule(true, "$.emptyList", "length > 0", ""), // expected FAIL
+            AssertionRule(false, "$.code", "==", "999")          // disabled -> ignored
+        )
+        val evals = AssertionEvaluator.evaluateAll(
+            rawBody = body,
+            rules = rules,
+            globalVariables = mapOf("expectedCode" to "200")
+        )
+        assertEquals(10, evals.size)
+        assertEquals(9, evals.count { it.passed })
+        assertEquals(1, evals.count { !it.passed })
+        assertEquals("$.emptyList", evals.first { !it.passed }.rule.jsonPath)
+
+        // 5. Missing variable scanner excludes built-in dynamic vars & defined vars
+        val missingStep = ApiStep(
+            method = "POST",
+            url = "/orders/{{orderId}}",
+            headers = linkedMapOf("Authorization" to "Bearer {{accessToken}}"),
+            body = """{"ts":"{{${'$'}kstCompact}}","env":"{{envName}}"}""",
+            assertions = mutableListOf(AssertionRule(true, "$.owner", "==", "{{ownerId}}"))
+        )
+        val missing = VariableResolver.findMissingVariables(
+            step = missingStep,
+            scenario = ApiScenario(globalVariables = linkedMapOf("envName" to "dev")),
+            runtimeContext = mapOf("orderId" to "ORD-1"),
+            secrets = emptyMap(),
+            projectGlobalVariables = emptyMap()
+        )
+        assertEquals(listOf("accessToken", "ownerId"), missing)
+
+        // 6. Legacy ApiStep JSON without assertions field deserializes cleanly
+        val mapper = jacksonObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+        val legacyStep = mapper.readValue("""{"method":"GET","url":"/legacy"}""", ApiStep::class.java)
+        assertTrue(legacyStep.assertions.isEmpty())
     }
 }

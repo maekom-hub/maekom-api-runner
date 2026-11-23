@@ -1,5 +1,7 @@
 package com.maekom.apirunner.engine
 
+import com.maekom.apirunner.model.ApiScenario
+import com.maekom.apirunner.model.ApiStep
 import com.maekom.apirunner.model.QueryParamItem
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -253,6 +255,57 @@ object VariableResolver {
 
     private fun encodeQueryComponent(value: String): String {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
+    }
+
+    // [v0.4.0] 단건 실행 직전 스텝(URL·Params·Headers·Body·Assertions) 내 미정의 {{변수명}} 참조 스캔
+    // 변경 의도: 내장 동적 변수({{$...}}) 및 전역/시나리오/로컬 시크릿/실행 컨텍스트에 이미 값이 있는 변수를 제외하고
+    //          선행 스텝 미실행 등으로 비어 있는 변수를 사전에 감지해 사용자에게 안내
+    fun findMissingVariables(
+        step: ApiStep,
+        scenario: ApiScenario,
+        runtimeContext: Map<String, String> = emptyMap(),
+        secrets: Map<String, String> = emptyMap(),
+        projectGlobalVariables: Map<String, String> = emptyMap()
+    ): List<String> {
+        val effectiveGlobals = linkedMapOf<String, String>().apply {
+            putAll(scenario.globalVariables)
+            putAll(projectGlobalVariables)
+        }
+        val missing = linkedSetOf<String>()
+
+        fun scan(template: String?) {
+            if (template.isNullOrEmpty() || !template.contains("{{")) return
+            for (match in PLACEHOLDER_REGEX.findAll(template)) {
+                val key = match.groupValues[1]
+                if (key.startsWith("$") && DYNAMIC_VAR_MAP.containsKey(key)) continue
+                val value = lookup(key, runtimeContext, secrets, effectiveGlobals)
+                if (value.isNullOrEmpty()) {
+                    missing.add(key)
+                }
+            }
+        }
+
+        scan(scenario.baseUrl)
+        scan(step.url)
+        for (param in step.queryParams) {
+            if (param.enabled) {
+                scan(param.key)
+                scan(param.value)
+            }
+        }
+        val mergedHeaders = mergeHeaders(scenario.effectiveEnabledHeadersMap(), step.headers)
+        for ((k, v) in mergedHeaders) {
+            scan(k)
+            scan(v)
+        }
+        scan(step.body)
+        for (assertion in step.assertions) {
+            if (assertion.enabled) {
+                scan(assertion.expectedValue)
+            }
+        }
+
+        return missing.toList()
     }
 
     fun lookup(
