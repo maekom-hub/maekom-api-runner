@@ -13,6 +13,9 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.maekom.apirunner.engine.BulkJsonVariableParser
+import com.maekom.apirunner.engine.ScenarioVarOrigin
+import com.maekom.apirunner.engine.ScenarioVarRow
+import com.maekom.apirunner.engine.ScenarioVariableSyncEngine
 import com.maekom.apirunner.engine.VariableResolver
 import com.maekom.apirunner.i18n.I18nManager
 import com.maekom.apirunner.model.ApiScenario
@@ -36,7 +39,9 @@ import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -44,9 +49,9 @@ import javax.swing.event.TableModelEvent
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
-// [v0.4.2] 통합 관리 다이얼로그 명칭('공통 헤더·변수 관리') 통일, 5개 탭 영문 병기 제거 및 탭 순서 재배치
-//          (0: 공통 헤더 → 1: 프로젝트 전역 변수 → 2: 시나리오 변수 → 3: 로컬 시크릿 → 4: 내장 동적 변수·헤더)
-// 변경 의도: 상단 툴바 버튼명과 다이얼로그 타이틀·탭 명칭을 일관되게 정돈하고 자주 사용하는 프로젝트 전역 변수를 2번째 탭으로 전진 배치
+// [v0.4.3] 시나리오 변수 탭에 스텝별 응답 변수 추출 항목 통합 표시('출처' 컬럼 추가, (stepIndex, extractorIndex) 고유 참조 바인딩)
+//          및 변수명 변경(참조 일괄 치환 확인)·값 Override·삭제 양방향 현행화 지원
+// 변경 의도: 기존 .maekom/scenarios/**/*.json 스키마를 유지하면서 현재 시나리오의 모든 정적·추출 변수를 한 탭에서 안전하게 통합 관리
 
 enum class HeaderImportMode {
     MERGE,
@@ -66,11 +71,12 @@ class GlobalConfigDialog(
     private val currentScenario: ApiScenario,
     private val storage: ScenarioStorageService,
     private val initialCommonHeaders: List<CommonHeaderItem>,
-    private val initialVariables: Map<String, String>,
+    @Suppress("UNUSED_PARAMETER") initialVariables: Map<String, String>,
     private val initialSecrets: Map<String, String>,
     private val currentScenarioPath: String = currentScenario.name,
     private val initialProjectGlobals: List<GlobalVariableItem> = storage.loadGlobalVariables(),
-    private val initialSelectedTab: Int = TAB_COMMON_HEADERS
+    private val initialSelectedTab: Int = TAB_COMMON_HEADERS,
+    private val runtimeContext: Map<String, String> = emptyMap()
 ) : DialogWrapper(project, true) {
 
     companion object {
@@ -119,7 +125,27 @@ class GlobalConfigDialog(
         override fun isCellEditable(row: Int, column: Int): Boolean = true
     }
 
-    private val variablesModel = createKeyValueModel(initialVariables)
+    // [v0.4.3] 시나리오 변수 탭 모델: [출처(Source, 읽기 전용)] | [Key] | [Value] | [복사]
+    private val scenarioVarsModel = object : DefaultTableModel(
+        arrayOf<Any>(
+            I18nManager.t("global.scenarioVars.col.source"),
+            I18nManager.t("global.col.key"),
+            I18nManager.t("global.col.value"),
+            I18nManager.t("vars.col.action")
+        ),
+        0
+    ) {
+        override fun isCellEditable(row: Int, column: Int): Boolean = (column == 1 || column == 2)
+    }
+    private val scenarioVarRows: MutableList<ScenarioVarRow> = ScenarioVariableSyncEngine.buildUnifiedRows(
+        scenario = currentScenario,
+        runtimeContext = runtimeContext,
+        staticSourceLabel = I18nManager.t("global.scenarioVars.sourceStatic")
+    )
+    private val initialScenarioVarRowsSnapshot: List<ScenarioVarRow> = scenarioVarRows.map { it.deepCopy() }
+    private val deletedExtractorRefs: MutableSet<Pair<Int, Int>> = linkedSetOf()
+    private var isUpdatingScenarioVarsTable = false
+    private var replaceReferencesOnRename = false
 
     // Tab 2: Project Global Variables — inline editable ([활성] | [Key] | [Value] | [Secret] | [복사])
     private val projectGlobalsModel = object : DefaultTableModel(
@@ -174,6 +200,7 @@ class GlobalConfigDialog(
         for (item in initialCommonHeaders) {
             commonHeadersModel.addRow(arrayOf<Any>(item.enabled, item.key, item.value, item.secret))
         }
+        populateScenarioVarsModel()
         populateProjectGlobalsModel(initialProjectGlobals)
         init()
     }
@@ -197,7 +224,7 @@ class GlobalConfigDialog(
             }
             columnModel.getColumn(3).apply { maxWidth = 68; minWidth = 54; preferredWidth = 60 }
         }
-        variablesTable = createEditableTable(variablesModel)
+        variablesTable = createScenarioVarsTable()
         projectGlobalsTable = createProjectGlobalsTable()
         secretsTable = createEditableTable(secretsModel)
         dynamicTable = createDynamicVariablesTable()
@@ -215,17 +242,10 @@ class GlobalConfigDialog(
             I18nManager.t("global.tab.projectGlobals"),
             buildProjectGlobalsTab()
         )
-        // 3) 시나리오 변수 (2)
+        // 3) 시나리오 변수 (2) — 정적 시나리오 변수 + 스텝 응답 변수 추출 통합 양방향 현행화 탭
         tabbedPane.addTab(
             I18nManager.t("global.tab.vars"),
-            buildKeyValueTableTab(
-                scopeText = I18nManager.t("global.scope.scenario", scenarioDisplay),
-                scopeColor = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6)),
-                table = variablesTable,
-                model = variablesModel,
-                hint = I18nManager.t("global.tab.vars.hint"),
-                bulkTargetLabel = I18nManager.t("global.tab.vars")
-            )
+            buildScenarioVarsTab(scenarioDisplay)
         )
         // 4) 로컬 시크릿 (3)
         tabbedPane.addTab(
@@ -319,6 +339,296 @@ class GlobalConfigDialog(
         panel.add(btnBar, BorderLayout.SOUTH)
 
         return panel
+    }
+
+    // [v0.4.3] 시나리오 변수 통합 테이블([출처] | [Key] | [Value] | [복사]), 우클릭/버튼 {{Key}} 복사 및 양방향 현행화 로직
+    private fun createScenarioVarsTable(): JBTable {
+        val table = JBTable(scenarioVarsModel).apply {
+            setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
+            rowHeight = 25
+            putClientProperty("terminateEditOnFocusLost", true)
+            tableHeader.reorderingAllowed = false
+            columnModel.getColumn(0).apply {
+                preferredWidth = 240
+                minWidth = 140
+                cellRenderer = ScenarioVarSourceRenderer()
+            }
+            columnModel.getColumn(1).preferredWidth = 190
+            columnModel.getColumn(2).preferredWidth = 260
+            columnModel.getColumn(3).apply {
+                maxWidth = 72
+                minWidth = 58
+                preferredWidth = 64
+                cellRenderer = InlineCopyCellRenderer()
+            }
+
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    val row = rowAtPoint(e.point)
+                    val col = columnAtPoint(e.point)
+                    if (row !in scenarioVarRows.indices) return
+                    // [복사] 셀 클릭 또는 읽기 전용 [출처] 셀 더블클릭 시 {{Key}} 즉시 복사
+                    if (col == 3 || (col == 0 && e.clickCount == 2)) {
+                        copyScenarioVarTokenAt(row)
+                    }
+                }
+
+                override fun mousePressed(e: MouseEvent) = maybeShowCopyMenu(e)
+                override fun mouseReleased(e: MouseEvent) = maybeShowCopyMenu(e)
+
+                private fun maybeShowCopyMenu(e: MouseEvent) {
+                    if (!e.isPopupTrigger) return
+                    val row = rowAtPoint(e.point)
+                    if (row !in scenarioVarRows.indices) return
+                    setRowSelectionInterval(row, row)
+                    val key = scenarioVarRows[row].key.trim()
+                    val menu = JPopupMenu()
+                    menu.add(JMenuItem(I18nManager.t("global.scenarioVars.copyMenu")).apply {
+                        isEnabled = key.isNotEmpty()
+                        addActionListener { copyScenarioVarTokenAt(row) }
+                    })
+                    menu.show(this@apply, e.x, e.y)
+                }
+            })
+        }
+
+        scenarioVarsModel.addTableModelListener { e ->
+            if (isUpdatingScenarioVarsTable || e.type != TableModelEvent.UPDATE) return@addTableModelListener
+            val row = e.firstRow
+            if (row !in scenarioVarRows.indices) return@addTableModelListener
+            val meta = scenarioVarRows[row]
+
+            if (e.column == 1) {
+                val prevKey = meta.key
+                val newKey = (scenarioVarsModel.getValueAt(row, 1)?.toString() ?: "").trim()
+                if (newKey.startsWith("$")) {
+                    Messages.showWarningDialog(
+                        project,
+                        I18nManager.t("global.projectGlobals.reservedKeyMsg"),
+                        I18nManager.t("global.projectGlobals.dupKeyTitle")
+                    )
+                    restoreScenarioVarKeyCell(row, prevKey)
+                    return@addTableModelListener
+                }
+                if (newKey.isNotEmpty()) {
+                    val duplicate = scenarioVarRows.withIndex().any { (idx, other) ->
+                        idx != row && other.key.trim().equals(newKey, ignoreCase = true)
+                    }
+                    if (duplicate) {
+                        Messages.showWarningDialog(
+                            project,
+                            I18nManager.t("global.scenarioVars.dupKeyMsg", newKey),
+                            I18nManager.t("global.projectGlobals.dupKeyTitle")
+                        )
+                        restoreScenarioVarKeyCell(row, prevKey)
+                        return@addTableModelListener
+                    }
+                }
+                meta.key = newKey
+                if (newKey != scenarioVarsModel.getValueAt(row, 1)?.toString()) {
+                    restoreScenarioVarKeyCell(row, newKey)
+                }
+            } else if (e.column == 2) {
+                meta.value = scenarioVarsModel.getValueAt(row, 2)?.toString() ?: ""
+            }
+        }
+
+        return table
+    }
+
+    private fun restoreScenarioVarKeyCell(row: Int, value: String) {
+        isUpdatingScenarioVarsTable = true
+        try {
+            scenarioVarsModel.setValueAt(value, row, 1)
+        } finally {
+            isUpdatingScenarioVarsTable = false
+        }
+    }
+
+    private fun copyScenarioVarTokenAt(row: Int) {
+        stopEditing(variablesTable)
+        if (row !in scenarioVarRows.indices) return
+        val key = scenarioVarRows[row].key.trim()
+        if (key.isNotEmpty()) {
+            copyTokenWithFeedback("{{$key}}")
+        }
+    }
+
+    private fun populateScenarioVarsModel() {
+        isUpdatingScenarioVarsTable = true
+        try {
+            scenarioVarsModel.rowCount = 0
+            val copyLabel = I18nManager.t("vars.copyBtn")
+            for (row in scenarioVarRows) {
+                scenarioVarsModel.addRow(arrayOf<Any>(row.sourceLabel, row.key, row.value, copyLabel))
+            }
+        } finally {
+            isUpdatingScenarioVarsTable = false
+        }
+    }
+
+    private fun buildScenarioVarsTab(scenarioDisplay: String): JPanel {
+        val panel = JPanel(BorderLayout(0, 8))
+        panel.border = JBUI.Borders.empty(8)
+
+        val bulkImportBtn = JButton(I18nManager.t("bulk.btn")).apply {
+            addActionListener { openBulkImportForScenarioVars() }
+        }
+        val banner = buildScopeBanner(
+            scopeText = I18nManager.t("global.scope.scenario", scenarioDisplay),
+            scopeColor = JBColor(Color(0x15, 0x65, 0xC0), Color(0x64, 0xB5, 0xF6)),
+            hintHtml = I18nManager.t("global.tab.vars.hint"),
+            rightAction = bulkImportBtn
+        )
+        panel.add(banner, BorderLayout.NORTH)
+        panel.add(JBScrollPane(variablesTable), BorderLayout.CENTER)
+
+        val btnBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        val addBtn = JButton(I18nManager.t("global.add")).apply {
+            addActionListener {
+                stopEditing(variablesTable)
+                val staticLabel = I18nManager.t("global.scenarioVars.sourceStatic")
+                val newRow = ScenarioVarRow(
+                    origin = ScenarioVarOrigin.SCENARIO_STATIC,
+                    originalKey = "",
+                    key = "",
+                    value = "",
+                    sourceLabel = staticLabel,
+                    initialValue = ""
+                )
+                scenarioVarRows.add(newRow)
+                isUpdatingScenarioVarsTable = true
+                try {
+                    scenarioVarsModel.addRow(arrayOf<Any>(staticLabel, "", "", I18nManager.t("vars.copyBtn")))
+                } finally {
+                    isUpdatingScenarioVarsTable = false
+                }
+                val rowIdx = scenarioVarsModel.rowCount - 1
+                variablesTable.setRowSelectionInterval(rowIdx, rowIdx)
+                variablesTable.editCellAt(rowIdx, 1)
+            }
+        }
+        val copyVarBtn = JButton(I18nManager.t("global.scenarioVars.copyBtn")).apply {
+            addActionListener {
+                val row = variablesTable.selectedRow
+                if (row in scenarioVarRows.indices) {
+                    copyScenarioVarTokenAt(row)
+                }
+            }
+        }
+        val removeBtn = JButton(I18nManager.t("global.remove")).apply {
+            addActionListener {
+                stopEditing(variablesTable)
+                val selected = variablesTable.selectedRows.filter { it in scenarioVarRows.indices }
+                if (selected.isEmpty()) return@addActionListener
+
+                val extractorCount = selected.count { scenarioVarRows[it].origin == ScenarioVarOrigin.STEP_EXTRACTOR }
+                if (extractorCount > 0) {
+                    val confirm = Messages.showYesNoDialog(
+                        project,
+                        I18nManager.t("global.scenarioVars.deleteExtractorMsg", extractorCount),
+                        I18nManager.t("global.scenarioVars.deleteExtractorTitle"),
+                        Messages.getWarningIcon()
+                    )
+                    if (confirm != Messages.YES) return@addActionListener
+                }
+
+                isUpdatingScenarioVarsTable = true
+                try {
+                    for (idx in selected.sortedDescending()) {
+                        val removed = scenarioVarRows.removeAt(idx)
+                        if (removed.origin == ScenarioVarOrigin.STEP_EXTRACTOR) {
+                            deletedExtractorRefs.add(removed.stepIndex to removed.extractorIndex)
+                        }
+                        scenarioVarsModel.removeRow(idx)
+                    }
+                } finally {
+                    isUpdatingScenarioVarsTable = false
+                }
+            }
+        }
+        btnBar.add(addBtn)
+        btnBar.add(removeBtn)
+        btnBar.add(copyVarBtn)
+        panel.add(btnBar, BorderLayout.SOUTH)
+
+        return panel
+    }
+
+    // [v0.4.3] 시나리오 변수 JSON 일괄 입력 시 일반 시나리오 변수만 갱신하고 스텝 추출 변수 행은 덮어쓰지 않고 보존
+    private fun openBulkImportForScenarioVars() {
+        stopEditing(variablesTable)
+        val dialog = BulkJsonImportDialog(
+            project = project,
+            targetName = I18nManager.t("global.tab.vars"),
+            globalVariablesProvider = { getProjectGlobalVariables() },
+            scenarioProvider = { currentScenario },
+            isImportingIntoGlobalVars = false
+        )
+        if (!dialog.showAndGet()) return
+
+        val imported = dialog.getImportedItems()
+        val existingStaticMap = linkedMapOf<String, String>()
+        val preservedExtractors = mutableListOf<ScenarioVarRow>()
+        val extractorKeysLower = mutableSetOf<String>()
+
+        for (row in scenarioVarRows) {
+            if (row.origin == ScenarioVarOrigin.STEP_EXTRACTOR) {
+                preservedExtractors.add(row)
+                if (row.key.trim().isNotEmpty()) extractorKeysLower.add(row.key.trim().lowercase())
+            } else if (row.key.trim().isNotEmpty()) {
+                existingStaticMap[row.key.trim()] = row.value
+            }
+        }
+
+        // Preserve extractor rows: do not duplicate keys already owned by step extractors
+        val filteredImport = imported.filter { it.key.trim().lowercase() !in extractorKeysLower }
+        val mergedStatic = BulkJsonVariableParser.mergeIntoMap(existingStaticMap, filteredImport, dialog.getSelectedMergeMode())
+        val staticLabel = I18nManager.t("global.scenarioVars.sourceStatic")
+
+        scenarioVarRows.clear()
+        for ((k, v) in mergedStatic) {
+            scenarioVarRows.add(
+                ScenarioVarRow(
+                    origin = ScenarioVarOrigin.SCENARIO_STATIC,
+                    originalKey = k,
+                    key = k,
+                    value = v,
+                    sourceLabel = staticLabel,
+                    initialValue = v
+                )
+            )
+        }
+        scenarioVarRows.addAll(preservedExtractors)
+        populateScenarioVarsModel()
+        Messages.showInfoMessage(project, I18nManager.t("bulk.success", filteredImport.size), I18nManager.t("global.tab.vars"))
+    }
+
+    private inner class ScenarioVarSourceRenderer : DefaultTableCellRenderer() {
+        override fun getTableCellRendererComponent(
+            table: JTable?,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int
+        ): Component {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+            val meta = scenarioVarRows.getOrNull(row)
+            if (meta?.origin == ScenarioVarOrigin.STEP_EXTRACTOR) {
+                font = font.deriveFont(Font.BOLD)
+                if (!isSelected) {
+                    foreground = JBColor(Color(0x1B, 0x7F, 0x3A), Color(0x6C, 0xD9, 0x7E))
+                }
+            } else {
+                font = font.deriveFont(Font.PLAIN)
+                if (!isSelected) {
+                    foreground = JBColor.GRAY
+                }
+            }
+            toolTipText = value?.toString()
+            return this
+        }
     }
 
     private fun createProjectGlobalsTable(): JBTable {
@@ -600,12 +910,43 @@ class GlobalConfigDialog(
         }
     }
 
-    // [v0.4.1] Enter를 누르지 않고 바로 [저장] 클릭 시 모든 편집 테이블의 마지막 입력 셀을 안전하게 커밋
+    // [v0.4.3] 저장 시 편집 중인 셀 강제 커밋 후 변수명 변경에 따른 참조({{구변수명}} -> {{신변수명}}) 일괄 치환 확인
     override fun doOKAction() {
         stopEditing(headersTable)
         stopEditing(variablesTable)
         stopEditing(projectGlobalsTable)
         stopEditing(secretsTable)
+
+        val renamedPairs = scenarioVarRows.mapNotNull { row ->
+            val oldKey = row.originalKey.trim()
+            val newKey = row.key.trim()
+            if (oldKey.isNotEmpty() && newKey.isNotEmpty() && oldKey != newKey) oldKey to newKey else null
+        }.distinct()
+
+        replaceReferencesOnRename = false
+        if (renamedPairs.isNotEmpty()) {
+            val totalRefs = renamedPairs.sumOf { (oldKey, _) ->
+                ScenarioVariableSyncEngine.countVariableReferences(currentScenario, oldKey)
+            }
+            if (totalRefs > 0) {
+                val summary = renamedPairs.joinToString(", ") { (o, n) -> "$o → $n" }
+                val choice = Messages.showYesNoCancelDialog(
+                    project,
+                    I18nManager.t("global.scenarioVars.renameRefMsg", summary, totalRefs),
+                    I18nManager.t("global.scenarioVars.renameRefTitle"),
+                    I18nManager.t("global.scenarioVars.renameRefYes"),
+                    I18nManager.t("global.scenarioVars.renameRefNo"),
+                    I18nManager.t("global.cancel"),
+                    Messages.getQuestionIcon()
+                )
+                when (choice) {
+                    Messages.YES -> replaceReferencesOnRename = true
+                    Messages.NO -> replaceReferencesOnRename = false
+                    else -> return // Keep dialog open
+                }
+            }
+        }
+
         super.doOKAction()
     }
 
@@ -623,7 +964,21 @@ class GlobalConfigDialog(
         return result
     }
 
-    fun getGlobalVariables(): LinkedHashMap<String, String> = extractMap(variablesModel)
+    fun getGlobalVariables(): LinkedHashMap<String, String> {
+        val result = linkedMapOf<String, String>()
+        for (row in scenarioVarRows) {
+            if (row.origin == ScenarioVarOrigin.SCENARIO_STATIC && row.key.trim().isNotEmpty()) {
+                result[row.key.trim()] = row.value
+            }
+        }
+        return result
+    }
+
+    fun getEditedScenarioVarRows(): List<ScenarioVarRow> = scenarioVarRows.map { it.deepCopy() }
+
+    fun getDeletedExtractorRefs(): Set<Pair<Int, Int>> = deletedExtractorRefs.toSet()
+
+    fun shouldReplaceReferencesOnRename(): Boolean = replaceReferencesOnRename
 
     fun getProjectGlobalVariables(): MutableList<GlobalVariableItem> {
         val result = mutableListOf<GlobalVariableItem>()
@@ -645,10 +1000,9 @@ class GlobalConfigDialog(
         val normalizedInitialHeaders = initialCommonHeaders
             .filter { it.key.trim().isNotEmpty() }
             .map { it.copy(key = it.key.trim()) }
-        val normalizedInitialVars = LinkedHashMap<String, String>().apply {
-            initialVariables.forEach { (k, v) -> if (k.trim().isNotEmpty()) put(k.trim(), v) }
-        }
-        return getCommonHeaderItems() != normalizedInitialHeaders || getGlobalVariables() != normalizedInitialVars
+        val headersChanged = getCommonHeaderItems() != normalizedInitialHeaders
+        val varsChanged = scenarioVarRows != initialScenarioVarRowsSnapshot || deletedExtractorRefs.isNotEmpty()
+        return headersChanged || varsChanged
     }
 
     fun isProjectGlobalsChanged(): Boolean {

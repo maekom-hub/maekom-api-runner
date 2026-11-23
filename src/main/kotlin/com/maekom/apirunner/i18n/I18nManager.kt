@@ -9,8 +9,8 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.util.Disposer
 import java.util.concurrent.CopyOnWriteArrayList
 
-// [v0.4.2] 상단 툴바 버튼명('공통 헤더·변수 관리') 통일 및 통합 관리 다이얼로그 5개 탭 명칭 간소화(KO/EN 동기화)
-// 변경 의도: 불필요한 영문 병기를 제거하고 툴바 버튼·다이얼로그 타이틀·5개 탭 라벨을 간결하고 일관되게 정리
+// [v0.4.3] 시나리오 변수 탭 ↔ 스텝 응답 변수 추출 양방향 현행화(출처 컬럼·삭제 확인·참조 일괄 치환) KO/EN 문구 추가
+// 변경 의도: 시나리오 정적 변수와 스텝별 추출 변수의 출처 표시, 추출 규칙 삭제 확인 및 변수명 변경 시 참조 치환 안내 동기화
 enum class PluginLanguage(val code: String) {
     KO("KO"),
     EN("EN");
@@ -498,7 +498,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.tab.headers" to "공통 헤더",
             "global.tab.headers.hint" to "모든 스텝에 자동 병합됩니다. 개별 스텝 헤더에 값이 있으면 우선 적용되며, 개별 값이 비어 있으면 공통 헤더 값으로 자동 대체됩니다.",
             "global.tab.vars" to "시나리오 변수",
-            "global.tab.vars.hint" to "현재 시나리오 파일(.maekom/scenarios/*.json) 내부에 저장되는 전용 변수입니다. URL/헤더/본문에서 {{변수명}}으로 참조하세요.",
+            "global.tab.vars.hint" to "현재 시나리오의 정적 변수와 각 스텝의 '응답 변수 추출' 항목을 함께 관리합니다. Key·Value 수정 및 삭제 시 해당 스텝과 실행 세션에 양방향 현행화됩니다.",
             "global.tab.secrets" to "로컬 시크릿",
             "global.tab.secrets.hint" to "비밀번호/토큰 등 민감정보는 .maekom/secrets.local.json에 분리 저장됩니다(.gitignore 적용). 치환 우선순위: 내장 동적 변수 > 실행 컨텍스트 > 시크릿 > 전역 변수",
             "global.col.key" to "Key (이름)",
@@ -661,7 +661,20 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "batch.report.openScenario" to "해당 시나리오 열기",
             "batch.report.close" to "닫기",
             "batch.report.pass" to "✅ 성공",
-            "batch.report.fail" to "❌ 실패"
+            "batch.report.fail" to "❌ 실패",
+
+            // [v0.4.3] Scenario Variables <-> Step Extractors Bidirectional Sync
+            "global.scenarioVars.col.source" to "출처 (Source)",
+            "global.scenarioVars.sourceStatic" to "시나리오 변수",
+            "global.scenarioVars.dupKeyMsg" to "현재 시나리오에 이미 같은 변수명('%s')이 존재합니다. 이전 값으로 복원합니다.",
+            "global.scenarioVars.deleteExtractorTitle" to "스텝 추출 규칙 삭제 확인",
+            "global.scenarioVars.deleteExtractorMsg" to "선택한 항목 중 스텝의 '응답 변수 추출' 규칙 %d개가 포함되어 있습니다.\n[저장] 시 해당 스텝의 응답 변수 추출 규칙도 함께 제거됩니다. 계속하시겠습니까?",
+            "global.scenarioVars.renameRefTitle" to "변수 참조 일괄 변경 확인",
+            "global.scenarioVars.renameRefMsg" to "변수명이 변경되었습니다 (%s).\n현재 시나리오의 다른 스텝에서 참조 중인 {{구변수명}}(%d곳)도 새 변수명으로 함께 변경하시겠습니까?",
+            "global.scenarioVars.renameRefYes" to "예 (참조 함께 변경)",
+            "global.scenarioVars.renameRefNo" to "아니오 (변수명만 변경)",
+            "global.scenarioVars.copyBtn" to "📋 변수명 복사",
+            "global.scenarioVars.copyMenu" to "📋 {{변수명}} 복사"
         )
 
         private val EN_MESSAGES: Map<String, String> = mapOf(
@@ -1050,7 +1063,7 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "global.tab.headers" to "Common Headers",
             "global.tab.headers.hint" to "Automatically merged into all steps. Non-empty step headers take precedence; blank step header values automatically fall back to the enabled common header value.",
             "global.tab.vars" to "Scenario Variables",
-            "global.tab.vars.hint" to "Stored inside the current scenario JSON (.maekom/scenarios/*.json). Reference via {{varName}} in URL/Headers/Body.",
+            "global.tab.vars.hint" to "Manage both static scenario variables and step 'Extract Rules' together. Renames, value overrides, and deletions sync bidirectionally with steps and the active session.",
             "global.tab.secrets" to "Local Secrets",
             "global.tab.secrets.hint" to "Sensitive data is stored separately in .maekom/secrets.local.json (gitignored). Priority: Dynamic > Runtime Context > Secrets > Global Vars",
             "global.col.key" to "Key",
@@ -1213,7 +1226,20 @@ class I18nManager : PersistentStateComponent<I18nManager.State> {
             "batch.report.openScenario" to "Open Scenario",
             "batch.report.close" to "Close",
             "batch.report.pass" to "✅ PASS",
-            "batch.report.fail" to "❌ FAIL"
+            "batch.report.fail" to "❌ FAIL",
+
+            // [v0.4.3] Scenario Variables <-> Step Extractors Bidirectional Sync
+            "global.scenarioVars.col.source" to "Source",
+            "global.scenarioVars.sourceStatic" to "Scenario Variable",
+            "global.scenarioVars.dupKeyMsg" to "A variable named '%s' already exists in this scenario. Restoring previous value.",
+            "global.scenarioVars.deleteExtractorTitle" to "Delete Step Extract Rules",
+            "global.scenarioVars.deleteExtractorMsg" to "Selection includes %d step 'Extract Rule(s)'.\nClicking [Save] will also remove them from their source steps. Continue?",
+            "global.scenarioVars.renameRefTitle" to "Update Variable References",
+            "global.scenarioVars.renameRefMsg" to "Variable name(s) changed (%s).\nAlso update %d reference(s) ({{oldName}} -> {{newName}}) across steps in this scenario?",
+            "global.scenarioVars.renameRefYes" to "Yes (Update References)",
+            "global.scenarioVars.renameRefNo" to "No (Rename Only)",
+            "global.scenarioVars.copyBtn" to "📋 Copy {{Var}}",
+            "global.scenarioVars.copyMenu" to "📋 Copy {{Variable}}"
         )
     }
 }

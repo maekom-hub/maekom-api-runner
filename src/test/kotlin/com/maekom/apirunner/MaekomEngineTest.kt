@@ -11,6 +11,8 @@ import com.maekom.apirunner.engine.CurlParser
 import com.maekom.apirunner.engine.HttpExecutor
 import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ScenarioRunner
+import com.maekom.apirunner.engine.ScenarioVarOrigin
+import com.maekom.apirunner.engine.ScenarioVariableSyncEngine
 import com.maekom.apirunner.engine.VariableConflictType
 import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.engine.VariableResolver
@@ -943,5 +945,95 @@ class MaekomEngineTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    // [v0.4.3] 시나리오 변수 탭 ↔ 스텝별 응답 변수 추출 양방향 현행화(출처 표기, (stepIndex, extractorIndex) 고유 바인딩,
+    //          변수명 변경 + 참조 일괄 치환, 값 Override 및 추출 규칙 삭제) 단위 테스트
+    @Test
+    fun `scenario variable sync engine unifies static and step extractors with bidirectional rename, override, and delete`() {
+        val scenario = ApiScenario(
+            name = "sync-demo",
+            globalVariables = linkedMapOf("merchantId" to "M-001"),
+            steps = mutableListOf(
+                ApiStep(
+                    name = "Login",
+                    alias = "로그인",
+                    method = "POST",
+                    url = "/auth/login",
+                    extractRules = mutableListOf(
+                        ExtractRule(varName = "accessToken", jsonPath = "$.data.token", required = true),
+                        ExtractRule(varName = "tempId", jsonPath = "$.data.tempId", required = false)
+                    )
+                ),
+                ApiStep(
+                    name = "Orders",
+                    alias = "",
+                    method = "GET",
+                    url = "/orders/{{accessToken}}",
+                    queryParams = mutableListOf(QueryParamItem(true, "tok", "{{accessToken}}")),
+                    headers = linkedMapOf("Authorization" to "Bearer {{accessToken}}"),
+                    body = """{"token":"{{accessToken}}"}""",
+                    assertions = mutableListOf(AssertionRule(true, "$.token", "==", "{{accessToken}}")),
+                    extractRules = mutableListOf(
+                        ExtractRule(varName = "orderId", jsonPath = "$.data.id", required = true)
+                    )
+                )
+            )
+        )
+        val runtimeContext = linkedMapOf("accessToken" to "live-tok-1")
+
+        // 1. Build unified rows with exact source labels
+        val rows = ScenarioVariableSyncEngine.buildUnifiedRows(scenario, runtimeContext, "시나리오 변수")
+        assertEquals(4, rows.size)
+        assertEquals(ScenarioVarOrigin.SCENARIO_STATIC, rows[0].origin)
+        assertEquals("시나리오 변수", rows[0].sourceLabel)
+        assertEquals("Step 1 · [로그인] POST /auth/login", rows[1].sourceLabel)
+        assertEquals("live-tok-1", rows[1].value)
+        assertEquals("Step 2 · GET /orders/{{accessToken}}", rows[3].sourceLabel)
+
+        // 2. Count references before rename (url + queryParam + header + body + assertion = 5)
+        assertEquals(5, ScenarioVariableSyncEngine.countVariableReferences(scenario, "accessToken"))
+
+        // 3. Rename accessToken -> authToken, override its value, and delete tempId (0, 1)
+        rows[1].key = "authToken"
+        rows[1].value = "override-tok-99"
+        val deletedRefs = setOf(rows[2].stepIndex to rows[2].extractorIndex) // tempId at (0, 1)
+        rows.removeAt(2)
+
+        val result = ScenarioVariableSyncEngine.applySync(
+            scenario = scenario,
+            runtimeContext = runtimeContext,
+            editedRows = rows,
+            deletedExtractorRefs = deletedRefs,
+            replaceReferencesForRenames = true
+        )
+
+        assertTrue(result.scenarioModified)
+        assertTrue(result.runtimeContextModified)
+        assertTrue(result.extractorRulesChanged)
+        assertEquals(5, result.replacedReferenceCount)
+
+        // Step 1 extractRules: accessToken renamed to authToken, tempId deleted
+        assertEquals(1, scenario.steps[0].extractRules.size)
+        assertEquals("authToken", scenario.steps[0].extractRules[0].varName)
+
+        // Step 2 references all updated to {{authToken}}
+        assertEquals("/orders/{{authToken}}", scenario.steps[1].url)
+        assertEquals("{{authToken}}", scenario.steps[1].queryParams[0].value)
+        assertEquals("Bearer {{authToken}}", scenario.steps[1].headers["Authorization"])
+        assertEquals("""{"token":"{{authToken}}"}""", scenario.steps[1].body)
+        assertEquals("{{authToken}}", scenario.steps[1].assertions[0].expectedValue)
+
+        // Value edit reflected in BOTH runtimeContext (override) and scenario.globalVariables (default)
+        assertEquals("override-tok-99", runtimeContext["authToken"])
+        assertFalse(runtimeContext.containsKey("accessToken"))
+        assertEquals("override-tok-99", scenario.globalVariables["authToken"])
+        assertEquals("M-001", scenario.globalVariables["merchantId"])
+
+        // Re-opening dialog shows authToken once (no duplicate static+extractor row) with updated value
+        val reopened = ScenarioVariableSyncEngine.buildUnifiedRows(scenario, runtimeContext, "시나리오 변수")
+        assertEquals(3, reopened.size)
+        assertEquals(1, reopened.count { it.key == "authToken" })
+        assertEquals("override-tok-99", reopened.first { it.key == "authToken" }.value)
     }
 }

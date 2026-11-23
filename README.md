@@ -39,9 +39,10 @@
 2. **요청 추가:** Spring 컨트롤러 메서드 옆 **🌶️ 고추 아이콘**을 클릭해 단건 실행하거나 현재 시나리오에 스텝을 추가합니다.
 3. **체이닝 & 관리:** 응답 JSON에서 필드를 추출(`{{변수명}}`)해 다음 스텝에 연결하고, **`[시나리오 관리]`** 팝업에서 폴더별로 시나리오를 정리하세요.
 
-### 🆕 `v0.4.2` 최신 업데이트
+### 🆕 `v0.4.3` 최신 업데이트
 
-- **툴바 버튼명 & 통합 관리 팝업 탭 정비:** 상단 툴바 버튼 및 창 타이틀을 **`공통 헤더·변수 관리`**(`Common Headers & Variables`)로 통일하고, 5개 탭 명칭 간소화 및 순서 재배치(`공통 헤더` → `프로젝트 전역 변수` → `시나리오 변수` → `로컬 시크릿` → `내장 동적 변수·헤더`) 완료
+- **`시나리오 변수` ↔ 스텝 `응답 변수 추출` 양방향 현행화:** `[공통 헤더·변수 관리]`의 `시나리오 변수` 탭에 현재 시나리오의 정적 변수와 스텝별 추출 변수를 **`출처 (Source)`** 컬럼(`시나리오 변수` / `Step N · [별칭] METHOD /path`) 및 **`[변수명 복사]`**(`{{Key}}` 클립보드 복사) 기능과 함께 통합 표시
+- **고유 참조 바인딩 & 안전한 일괄 동기화:** `(stepIndex, extractorIndex)` 바인딩으로 정확한 대상 스텝의 추출 규칙을 수정·삭제(확인 안내 포함)하고, 변수명 변경 시 시나리오 내 참조 중인 `{{구변수명}}` 일괄 치환 및 `Value` 인라인 Override 즉시 연동 지원(`JSON 일괄 입력` 시 추출 변수 행 보존)
 
 ---
 
@@ -61,9 +62,10 @@
 2. **Capture Endpoints:** Click the **🌶️ chili icon** next to any Spring controller method to run immediately or append to your scenario.
 3. **Chain & Organize:** Extract JSON response values into `{{variables}}` for subsequent steps and organize scenarios into folders via **`[Scenarios]`**.
 
-### 🆕 What's New in `v0.4.2`
+### 🆕 What's New in `v0.4.3`
 
-- **Toolbar & Unified Dialog Tab Polish:** Standardized the toolbar button and dialog title to **`Common Headers & Variables`** (`공통 헤더·변수 관리`) and reordered the 5 simplified tabs (`Common Headers` → `Project Global Variables` → `Scenario Variables` → `Local Secrets` → `Built-in Dynamic Variables & Headers`).
+- **Bidirectional Sync for Scenario Variables & Step Extractors:** Displays both static scenario variables and step `Extract Rules` in the `Scenario Variables` tab with a read-only `Source` column (`Scenario Variable` / `Step N · [Alias] METHOD /path`) and one-click **`Copy {{Var}}`** clipboard actions.
+- **Safe Rename, Override & Delete Propagation:** Uses `(stepIndex, extractorIndex)` bindings to sync renames (with optional bulk `{{oldVar}} → {{newVar}}` replacement across steps), inline `Value` overrides (to both active session & default value), and confirmed rule deletions while preserving extractor rows during Bulk JSON Import.
 
 ---
 
@@ -74,6 +76,7 @@
 <!-- VERSION_HISTORY_START -->
 | 버전 | 릴리즈 날짜 | 변경 요약 | 다운로드 |
 | --- | --- | --- | --- |
+| `v0.4.3` | 2026-11-23 | `시나리오 변수` 탭에 스텝별 `응답 변수 추출` 통합 표시(`출처` 컬럼) 및 변수명 변경(참조 일괄 치환)·값 Override·삭제 양방향 현행화 / Unified `Scenario Variables` & step `Extract Rules` view with `Source` column and bidirectional rename/override/delete sync | [maekom-api-runner-0.4.3.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.3/maekom-api-runner-0.4.3.zip) |
 | `v0.4.2` | 2026-11-23 | 상단 툴바 버튼·창 타이틀 **`공통 헤더·변수 관리`** 통일 및 5개 탭 명칭 간소화·순서 재배치(`공통 헤더 → 프로젝트 전역 변수 → 시나리오 변수 → 로컬 시크릿 → 내장 동적 변수·헤더`) / Standardize **`Common Headers & Variables`** label and reorder simplified 5 tabs | [maekom-api-runner-0.4.2.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.2/maekom-api-runner-0.4.2.zip) |
 | `v0.4.1` | 2026-11-23 | `[변수·헤더 관리]` 5탭 통합 다이얼로그(전역 변수 인라인 편집·적용 범위 배지), `cURL` 빈 값 헤더·파라미터 기본 제외 및 옵션화, 폴더 단위 일괄 회귀 실행(`Run Folder`) & 결과 리포트 / Unified 5-tab Vars & Headers dialog (inline Global Vars editing), clean cURL blank-value omission & Folder Regression Batch Run with report | [maekom-api-runner-0.4.1.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.1/maekom-api-runner-0.4.1.zip) |
 | `v0.4.0` | 2026-11-23 | `[cURL]` 통합 다이얼로그(실시간 내보내기 미리보기·마스킹 + 스마트 가져오기 파서), 응답 본문 검증(`No-Code Assertion` 8종 연산자), 단건 실행 선행 변수 누락 보호 및 `추출 변수` 수동 Override / Unified `[cURL]` Export/Smart Import dialog, No-Code JSONPath Assertions, Missing Variable Guard & Extracted Vars manual override | [maekom-api-runner-0.4.0.zip](https://github.com/maekom-hub/maekom-api-runner/releases/download/v0.4.0/maekom-api-runner-0.4.0.zip) |

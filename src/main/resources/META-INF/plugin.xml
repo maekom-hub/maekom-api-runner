@@ -18,6 +18,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <h3>v0.4.3</h3>
+    <ul>
+      <li><b>Bidirectional Scenario Variables &amp; Step Extractors Sync:</b> Displays static scenario variables alongside all step <code>Extract Rules</code> in the <code>Scenario Variables</code> tab with a <code>Source</code> column (<code>Step N · [Alias] METHOD /path</code>) and one-click <code>{{Var}}</code> copy actions, supporting safe <code>(stepIndex, extractorIndex)</code> renames (with optional bulk <code>{{var}}</code> reference update), inline value overrides, and confirmed deletions while preserving extractor rows on Bulk JSON Import.</li>
+    </ul>
     <h3>v0.4.2</h3>
     <ul>
       <li><b>Unified Dialog &amp; Tab Polish:</b> Renamed the toolbar button and dialog title to <code>Common Headers &amp; Variables</code> (<code>공통 헤더·변수 관리</code>) and reordered the 5 simplified tabs: <code>Common Headers</code> → <code>Project Global Variables</code> → <code>Scenario Variables</code> → <code>Local Secrets</code> → <code>Built-in Dynamic Variables &amp; Headers</code>.</li>

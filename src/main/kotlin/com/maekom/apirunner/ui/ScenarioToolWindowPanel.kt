@@ -32,6 +32,7 @@ import com.maekom.apirunner.engine.JsonPathLocator
 import com.maekom.apirunner.engine.ParsedCurlResult
 import com.maekom.apirunner.engine.ScenarioRunListener
 import com.maekom.apirunner.engine.ScenarioRunner
+import com.maekom.apirunner.engine.ScenarioVariableSyncEngine
 import com.maekom.apirunner.engine.VariableNameValidator
 import com.maekom.apirunner.engine.VariableResolver
 import com.maekom.apirunner.i18n.I18nManager
@@ -2389,7 +2390,7 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
-    // [v0.4.1] [변수·헤더 관리] 5탭 통합 다이얼로그 오픈 및 변경된 저장소(시나리오 / 프로젝트 전역 변수 / 로컬 시크릿)만 선택 저장
+    // [v0.4.3] [공통 헤더·변수 관리] 5탭 통합 다이얼로그 오픈 및 시나리오 변수 ↔ 스텝 응답 변수 추출 양방향 현행화
     private fun openGlobalConfigDialog(initialTab: Int = GlobalConfigDialog.TAB_COMMON_HEADERS) {
         stopAllTableEdits()
         syncEditorToCurrentStep()
@@ -2405,14 +2406,32 @@ class ScenarioToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             initialSecrets = currentSecrets,
             currentScenarioPath = currentScenarioPath,
             initialProjectGlobals = currentProjectGlobals,
-            initialSelectedTab = initialTab
+            initialSelectedTab = initialTab,
+            runtimeContext = LinkedHashMap(lastRuntimeContext)
         )
         if (dialog.showAndGet()) {
             var anySaved = false
             if (dialog.isScenarioTabChanged()) {
                 currentScenario.applyCommonHeaderItems(dialog.getCommonHeaderItems())
-                currentScenario.globalVariables = dialog.getGlobalVariables()
+                val syncResult = ScenarioVariableSyncEngine.applySync(
+                    scenario = currentScenario,
+                    runtimeContext = lastRuntimeContext,
+                    editedRows = dialog.getEditedScenarioVarRows(),
+                    deletedExtractorRefs = dialog.getDeletedExtractorRefs(),
+                    replaceReferencesForRenames = dialog.shouldReplaceReferencesOnRename()
+                )
+                // 스텝 추출 규칙·참조 치환 결과를 현재 선택 스텝 UI(응답 변수 추출 탭 포함)에 즉시 반영
+                val prevEditorTab = editorTabs.selectedIndex
+                refreshEditorFromSelection()
+                if (prevEditorTab in 0 until editorTabs.tabCount) {
+                    editorTabs.selectedIndex = prevEditorTab
+                }
+                refreshStepTablePreservingSelection(refreshEditor = false)
+                if (syncResult.runtimeContextModified) {
+                    refreshExtractedVarsTable()
+                }
                 saveCurrentScenario(showFeedback = false)
+                updateDirtyIndicator()
                 anySaved = true
             }
             if (dialog.isProjectGlobalsChanged()) {
